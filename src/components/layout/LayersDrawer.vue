@@ -1,4 +1,6 @@
 <script setup>
+import MapFilters from "@/components/MapFilters.vue";
+
 const modelValue = defineModel("modelValue", { type: Boolean, default: true });
 
 function toggleLayersDrawer() {
@@ -14,6 +16,7 @@ function toggleLayersDrawer() {
     >
         <!-- Drawer Content -->
         <slot></slot>
+        <MapFilters />
 
         <!-- Toggle Button -->
         <v-btn
