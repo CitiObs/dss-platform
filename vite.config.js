@@ -9,6 +9,9 @@ export default defineConfig({
         alias: {
             "@": fileURLToPath(new URL("./src", import.meta.url)),
         },
+        "geoint:scss": fileURLToPath(
+            new URL("./node_modules/@geoint/geoint-vue/src/assets/scss/geoint/_index.scss", import.meta.url)
+        ),
     },
     optimizeDeps: {
         include: [
