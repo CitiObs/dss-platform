@@ -25,7 +25,7 @@
     "vue-eslint-parser": "^9.3.1"
   },
   "dependencies": {
-    "@geoint/geoint-vue": "^4.2.0-pre.5",
+    "@geoint/geoint-vue": "^4.2.0",
     "@vuepic/vue-datepicker": "^8.8.0",
     "dayjs": "^1.11.10",
     "pinia": "^2.1.7",
