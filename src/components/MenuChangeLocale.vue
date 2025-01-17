@@ -1,5 +1,6 @@
 <script setup>
 import { useLocaleStore } from "@/stores/localeStore.js";
+import { GiBtn } from "@geoint/geoint-vue";
 
 const localeStore = useLocaleStore();
 
@@ -19,10 +20,12 @@ const langs = [
     <div>
         <v-menu location="bottom">
             <template #activator="{ props }">
-                <v-btn
+                <GiBtn
                     icon="mdi-translate"
-                    variant="text"
-                    class="text-medium-emphasis"
+                    size="medium"
+                    color="grey"
+                    variant="outlined-high-contrast"
+                    class="bg-transparent border"
                     v-bind="props"
                 />
             </template>
