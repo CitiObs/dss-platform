@@ -13,7 +13,7 @@ function toggleLayersDrawer() {
         width="400"
     >
         <!-- Drawer Content -->
-        <div></div>
+        <slot></slot>
 
         <!-- Toggle Button -->
         <v-btn
