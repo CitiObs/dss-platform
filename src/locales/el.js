@@ -7,6 +7,16 @@ export default {
         wearables: "Φορητές Συσκευές",
     },
 
+    sensor: {
+        metric: "Μετρική",
+        sensorId: "Id Αισθητήρα",
+        sensorName: "Όνομα Αισθητήρα",
+        sensorType: "Τύπος Αισθητήρα",
+        lastMeasurement: "Τελευταία Μέτρηση",
+        dataOrigin: "Προέλευση Δεδομένων",
+        license: "Άδεια",
+    },
+
     lang: "ελληνικά",
     weatherSummary: "Σύνοψη Καιρού",
 };

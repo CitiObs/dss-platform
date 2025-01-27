@@ -1,21 +1,22 @@
 <script setup>
 import { ref, computed, inject } from "vue";
-import { FeatureCollection, withAsync } from "@geoint/geoint-vue";
+import { FeatureCollection } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import LayoutMap from "@/layouts/LayoutMap.vue";
+import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 
-const geoint = inject("geoint");
 const sensorThingsApi = useSensorThingsApi();
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
 const fois = ref(new FeatureCollection());
 const stats = ref({});
 const mapRef = ref();
-
-sensorThingsApi.getFOIs(fois.value, stats.value);
+const apiCode = ref();
+const observationsLink = ref();
+const isSensorOverviewDialog = ref(false);
 
 const mapSize = computed(() => ({
     width: "100%",
@@ -29,35 +30,21 @@ function getFeatures (event) {
     return features;
 }
 
-async function getFeatureObservations (observationsLink) {
-    const api = geoint.api("virtualair");
+async function handleMapClick (event) {
+    isSensorOverviewDialog.value = true;
 
-    const params = {
-        $expand: "Datastream($expand=ObservedProperty)",
-    };
-
-    const { response, error } = await withAsync(
-        api.get, 
-        observationsLink, 
-        { params }
-    );
-
-    if (error) {
-        console.error(error);
+    const features = getFeatures(event);
+    if (!features.length) {
+        apiCode.value = "";
+        observationsLink.value = "";
         return;
     }
 
-    return response.data;
+    apiCode.value = features[0].id.substring(0, 4);
+    observationsLink.value = features[0].observationsNavigationLink;
 }
 
-async function handleMapClick (event) {
-    const features = getFeatures(event);
-
-    if (!features.length) return;
-
-    const featuresObservations = await getFeatureObservations(features[0].observationsNavigationLink); // Temporary get the first feature
-    console.log(featuresObservations);
-}
+sensorThingsApi.getFOIs(fois.value, stats.value);
 
 </script>
 
@@ -90,5 +77,11 @@ async function handleMapClick (event) {
                 </ol-vector-layer>
             </ol-map>
         </div>
+
+        <SensorOverviewDialog
+            v-model="isSensorOverviewDialog"
+            :api-code="apiCode"
+            :observations-link="observationsLink"
+        />
     </LayoutMap>
 </template>
