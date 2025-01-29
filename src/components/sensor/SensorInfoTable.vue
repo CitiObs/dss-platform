@@ -16,7 +16,7 @@ const tableFields = computed(() => {
     return [
         {
             label: props.sensorInfo.metric,
-            value: props.sensorInfo.result
+            value: `${props.sensorInfo.result} ${props.sensorInfo.unitOfMeasurement}`
         },
         {
             label: t("sensor.lastMeasurement"),

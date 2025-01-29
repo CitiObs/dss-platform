@@ -65,6 +65,7 @@ const sensorInfo = computed(() => {
         ...overviewData.value.sensorInfo,
         metric: latestData.Datastream.name,
         result: latestData.result,
+        unitOfMeasurement: latestData.Datastream.unitOfMeasurement.symbol,
         phenomenonTime: latestData.phenomenonTime,
     };
 
