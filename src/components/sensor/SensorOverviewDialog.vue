@@ -2,7 +2,7 @@
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { GiSelect } from "@geoint/geoint-vue";
-import { useKWUYApi } from "@/components/sensor/useKWUYApi.js";
+import { useKTUYApi } from "@/components/sensor/useKTUYApi.js";
 import { useSWNPApi } from "@/components/sensor/useSWNPApi.js";
 
 import BaseDialog from "@/components/base/BaseDialog.vue";
@@ -25,7 +25,7 @@ const isDialogOpen = defineModel({ type: Boolean, required: true });
 
 const { t } = useI18n();
 const apiMapping = {
-    KTUY: useKWUYApi(),
+    KTUY: useKTUYApi(),
     SWNP: useSWNPApi(),
 };
 

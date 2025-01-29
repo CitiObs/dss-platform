@@ -1,7 +1,7 @@
 import { inject } from "vue";
 import { withAsync } from "@geoint/geoint-vue";
 
-export function useKWUYApi () {
+export function useKTUYApi () {
     const geoint = inject("geoint");
     const api = geoint.api("virtualair");
 
@@ -95,7 +95,7 @@ export function useKWUYApi () {
             thingId: thingData["@iot.id"],
             thingName: thingData.name,
             dataOrigin: "rivm",
-            senorType: sensorData.name
+            sensorType: sensorData.name
         };
 
         return { 
