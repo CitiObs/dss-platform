@@ -1,19 +1,26 @@
 <script setup>
-import { ref, inject } from "vue";
+import { ref, computed, inject } from "vue";
 import { FeatureCollection, withAsync } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
+import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import LayoutMap from "@/layouts/LayoutMap.vue";
 
 const geoint = inject("geoint");
 const sensorThingsApi = useSensorThingsApi();
+const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
 const fois = ref(new FeatureCollection());
 const stats = ref({});
 const mapRef = ref();
 
 sensorThingsApi.getFOIs(fois.value, stats.value);
+
+const mapSize = computed(() => ({
+    width: "100%",
+    height: `calc(100vh - ${occupiedHeight}px)`,
+}));
 
 function getFeatures (event) {
     const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
@@ -68,7 +75,7 @@ async function handleMapClick (event) {
             <ol-map
                 ref="mapRef"
                 :controls="[]"
-                style="width: 100%; height: 80vh;"
+                :style="mapSize"
                 @click="handleMapClick"
             >
                 <ol-view

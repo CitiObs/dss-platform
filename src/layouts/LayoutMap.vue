@@ -13,7 +13,10 @@ import TheFooter from "@/components/layout/TheFooter.vue";
 
         <!-- Main Content -->
         <v-main>
-            <v-container>
+            <v-container
+                fluid
+                class="pa-0"
+            >
                 <slot></slot>
             </v-container>
         </v-main>
