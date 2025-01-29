@@ -12,7 +12,7 @@ const props = defineProps({
 
 const { t } = useI18n();
 
-const tableFields = computed(() => {
+const primaryFields = computed(() => {
     return [
         {
             label: props.sensorInfo.metric,
@@ -22,6 +22,11 @@ const tableFields = computed(() => {
             label: t("sensor.lastMeasurement"),
             value: formatTimestamp(props.sensorInfo.phenomenonTime)
         },
+    ];
+});
+
+const secondaryFields = computed(() => {
+    return [
         {
             label: t("sensor.sensorName"),
             value: props.sensorInfo.thingName
@@ -44,30 +49,43 @@ const tableFields = computed(() => {
 </script>
 
 <template>
-    <v-table
-        density="compact"
-        class="rounded border"
-    >
-        <tbody>
-            <tr
-                v-for="(field, index) in tableFields"
-                :key="index"
-            >
-                <td class="label-style">
-                    {{ field.label }}
-                </td>
-                <td>{{ field.value ?? "-" }}</td>
-            </tr>
-        </tbody>
-    </v-table>
+    <div>
+        <v-table
+            density="compact"
+            class="gi-text-lg rounded border"
+        >
+            <tbody>
+                <tr
+                    v-for="(field, index) in primaryFields"
+                    :key="index"
+                >
+                    <td>{{ field.label }}</td>
+                    <td>{{ field.value ?? "-" }}</td>
+                </tr>
+            </tbody>
+        </v-table>
+
+        <div class="my-6"></div>
+
+        <v-table
+            density="compact"
+            class="gi-text-base gi-text-black-300"
+        >
+            <tbody>
+                <tr
+                    v-for="(field, index) in secondaryFields"
+                    :key="index"
+                >
+                    <td>{{ field.label }}</td>
+                    <td>{{ field.value ?? "-" }}</td>
+                </tr>
+            </tbody>
+        </v-table>
+    </div>
 </template>
 
 <style scoped>
 .v-table .v-table__wrapper > table > tbody > tr:not(:last-child) > td {
   border-bottom: none;
-}
-
-.label-style {
-    font-weight: 500
 }
 </style>
