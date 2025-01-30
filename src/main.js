@@ -30,11 +30,11 @@ createApp(App)
     .use(geoint)
     .use(OpenLayersMap)
     .use(VueApexCharts)
-    // .use(keycloakVue, {
-    //     ...CONFIG.keycloak_options,
-    //     onTokenRefresh: (keycloak) => {
-    //         geoint.apiClient("geoint-api").defaults.headers["Authorization"] = `Bearer ${keycloak.token}`;
-    //         geoint.apiClient("wfs").defaults.headers["Authorization"] = `Bearer ${keycloak.token}`;
-    //     },
-    // })
+    .use(keycloakVue, {
+        ...CONFIG.keycloak_options,
+        onTokenRefresh: (keycloak) => {
+            geoint.apiClient("geoint-api").defaults.headers["Authorization"] = `Bearer ${keycloak.token}`;
+            geoint.apiClient("wfs").defaults.headers["Authorization"] = `Bearer ${keycloak.token}`;
+        },
+    })
     .mount("#app");
