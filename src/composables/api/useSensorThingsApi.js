@@ -49,7 +49,8 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         return olFeatures;
     };
 
-    const getFOIs = async (collection, stats) => {
+    const getFOIs = async (collection, stats, isFetching) => {
+        isFetching.value = true;
         stats.startTime = new Date().getTime();
         stats.totalRequests = 0;
 
@@ -61,6 +62,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
 
         if (error) {
             console.error(error);
+            isFetching.value = false;
             return;
         }
 
@@ -84,14 +86,15 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             }
 
             page++;
-            // Temporary set pages to 1 instead of MAX_PAGES to save time during development
-            if (page >= 1) {
+            // Temporary set pages to 10 instead of MAX_PAGES to save time during development
+            if (page >= 10) {
                 console.log("Max pages reached");
                 break;
             }
         }
 
         stats.totalTime = (new Date().getTime() - stats.startTime) / 1000;
+        isFetching.value = false;
     };
 
     /**

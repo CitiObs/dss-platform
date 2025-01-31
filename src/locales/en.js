@@ -17,6 +17,11 @@ export default {
         license: "License",
     },
 
+    home: {
+        welcomeToCitiobs: "Welcome to CitiObs!",
+        loadingMapData: "Loading map data, please wait..."
+    },
+
     lang: "english",
     weatherSummary: "Weather Summary",
 };

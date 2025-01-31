@@ -17,6 +17,11 @@ export default {
         license: "Άδεια",
     },
 
+    home: {
+        welcomeToCitiobs: "Καλωσήρθατε στο CitiObs!",
+        loadingMapData: "Φόρτωση δεδομένων χάρτη, παρακαλώ περιμένετε..."
+    },
+
     lang: "ελληνικά",
     weatherSummary: "Σύνοψη Καιρού",
 };
