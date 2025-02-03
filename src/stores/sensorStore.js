@@ -1,17 +1,19 @@
 import { defineStore } from "pinia";
-import GeoJSON from "ol/format/GeoJSON";
 import { FeatureCollection } from "@geoint/geoint-vue";
+
+import GeoJSON from "ol/format/GeoJSON";
+import LZString from "lz-string";
 
 export const useSensorStore = defineStore("sensor", () => {
     const geojson = new GeoJSON();
 
     function setSensorData(allSensors) {
-        const serialized = geojson.writeFeatures(allSensors.all());
+        const serialized =  LZString.compress(geojson.writeFeatures(allSensors.all()));
         localStorage.setItem("sensorData", serialized);
     }
 
     function getSensorData() {
-        const serialized = localStorage.getItem("sensorData");
+        const serialized = LZString.decompress(localStorage.getItem("sensorData"));
         try {
             const parsed = JSON.parse(serialized);
             const features = geojson.readFeatures(parsed);
