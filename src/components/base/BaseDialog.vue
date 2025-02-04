@@ -9,6 +9,10 @@ defineProps({
     maxWidth: {
         type: Number,
         default: 1400
+    },
+    canClose: {
+        type: Boolean,
+        default: true
     }
 });
 
@@ -31,6 +35,7 @@ function closeDialog () {
                     {{ title }}
 
                     <GiBtn
+                        :disabled="!canClose"
                         icon="mdi-close"
                         variant="text"
                         color="button-color"

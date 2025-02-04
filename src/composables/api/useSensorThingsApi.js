@@ -24,7 +24,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             const geometry = isFeatureObject ? cloneDeep(foi.feature.geometry) : cloneDeep(foi.feature);
 
             geometry.type = capitalize(geometry.type);
-        
+
             const properties = {
                 ...cloneDeep(foi.properties), // Clone original properties
                 id: foi["@iot.id"],
@@ -34,13 +34,13 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
                 description: foi.description,
                 encodingType: foi.encodingType,
             };
-        
+
             const feature = {
                 type: "Feature",
                 geometry,
                 properties,
             };
-        
+
             plainFeatures.features.push(feature);
         }
 
@@ -49,8 +49,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         return olFeatures;
     };
 
-    const getFOIs = async (collection, stats, isFetching) => {
-        isFetching.value = true;
+    const getFOIs = async (collection, stats) => {
         stats.startTime = new Date().getTime();
         stats.totalRequests = 0;
 
@@ -62,7 +61,6 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
 
         if (error) {
             console.error(error);
-            isFetching.value = false;
             return;
         }
 
@@ -86,15 +84,13 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             }
 
             page++;
-            // Temporary set pages to 10 instead of MAX_PAGES to save time during development
-            if (page >= 10) {
+            if (page >= MAX_PAGES) {
                 console.log("Max pages reached");
                 break;
             }
         }
 
         stats.totalTime = (new Date().getTime() - stats.startTime) / 1000;
-        isFetching.value = false;
     };
 
     /**

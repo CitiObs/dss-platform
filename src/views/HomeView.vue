@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 import { FeatureCollection, useGiColor } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { useSensorStore } from "@/stores/sensorStore.js";
@@ -18,6 +19,7 @@ const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height
 const fois = ref(new FeatureCollection());
 const stats = ref({});
 const mapRef = ref();
+const clusterRef = ref();
 const apiCode = ref();
 const observationsLink = ref();
 const isSensorOverviewDialog = ref(false);
@@ -35,6 +37,13 @@ const mapSize = computed(() => {
     };
 });
 
+const overrideStyleFunction = (feature, style) => {
+    const clusteredFeatures = feature.get("features");
+    const size = clusteredFeatures.length;
+    style.getText().setText(size.toString());
+    return style;
+};
+
 function getFeatures (event) {
     const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
     const features = featuresAtPixel.map(feature => feature.getProperties());
@@ -42,18 +51,19 @@ function getFeatures (event) {
     return features;
 }
 
-async function handleMapClick (event) {
+function handleMapClick (event) {
     isSensorOverviewDialog.value = true;
+    const clusteredFeatures = getFeatures(event);
 
-    const features = getFeatures(event);
-    if (!features.length) {
+    if (!clusteredFeatures.length) {
         apiCode.value = "";
         observationsLink.value = "";
         return;
     }
 
-    apiCode.value = features[0].id.substring(0, 4);
-    observationsLink.value = features[0].observationsNavigationLink;
+    const feature = clusteredFeatures[0].features[0]?.get("feature");
+    apiCode.value = feature.get("id").substring(0, 4);
+    observationsLink.value = feature.get("observationsNavigationLink");
 }
 
 onMounted(async () => {
@@ -64,8 +74,15 @@ onMounted(async () => {
         return;
     }
 
-    await sensorThingsApi.getFOIs(fois.value, stats.value, isInitialLoading);
+    isInitialLoading.value = true;
+    await sensorThingsApi.getFOIs(fois.value, stats.value);
     sensorStore.setSensorData(fois.value);
+    isInitialLoading.value = false;
+});
+
+onBeforeRouteLeave(() => {
+    const vectorSource = clusterRef.value.source.getSource();
+    vectorSource.clear(true);
 });
 
 </script>
@@ -91,11 +108,39 @@ onMounted(async () => {
                     :center="[0, 5000000]"
                     :zoom="3"
                 />
+
                 <ol-tile-layer>
                     <ol-source-osm />
                 </ol-tile-layer>
-                <ol-vector-layer>
-                    <ol-source-vector :features="fois.all()" />
+
+                <ol-vector-layer v-if="!isInitialLoading">
+                    <ol-source-cluster
+                        ref="clusterRef"
+                        :distance="60"
+                    >
+                        <ol-source-vector>
+                            <ol-feature
+                                v-for="(feature, index) in fois.all()"
+                                :key="index"
+                                :properties="{feature}"
+                            >
+                                <ol-geom-point :coordinates="feature.get('geometry').flatCoordinates" />
+                            </ol-feature>
+                        </ol-source-vector>
+                    </ol-source-cluster>
+
+                    <ol-style :override-style-function="overrideStyleFunction">
+                        <ol-style-circle :radius="15">
+                            <ol-style-fill color="#3399CC" />
+                            <ol-style-stroke
+                                color="#fff"
+                                :width="1"
+                            />
+                        </ol-style-circle>
+                        <ol-style-text font="14px sans-serif">
+                            <ol-style-fill color="#fff" />
+                        </ol-style-text>
+                    </ol-style>
                 </ol-vector-layer>
             </ol-map>
         </div>
@@ -110,6 +155,7 @@ onMounted(async () => {
             v-model="isInitialLoading"
             :title="$t('home.welcomeToCitiobs')"
             :max-width="800"
+            :can-close="false"
             persistent
         >
             <p class="text-center mb-4">
