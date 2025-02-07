@@ -4,7 +4,7 @@ import { withAsync, FeatureCollection } from "@geoint/geoint-vue";
 // import merge from "lodash-es/merge";
 import cloneDeep from "lodash-es/cloneDeep";
 
-const MAX_PAGES = 150;
+export const MAX_PAGES = 225;
 
 function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();

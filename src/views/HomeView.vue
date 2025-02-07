@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
-import { FeatureCollection, useGiColor } from "@geoint/geoint-vue";
-import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
+import { FeatureCollection, useGiColor, GiBtn } from "@geoint/geoint-vue";
+import { useSensorThingsApi, MAX_PAGES } from "@/composables/api/useSensorThingsApi";
 import { useSensorStore } from "@/stores/sensorStore.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 
@@ -27,7 +27,7 @@ const isInitialLoading = ref(false);
 
 const loadingProgress = computed(() => {
     if (!stats.value.totalRequests) return "";
-    return Math.trunc((stats.value.totalRequests / 150) * 100);
+    return Math.min(Math.trunc((stats.value.totalRequests / MAX_PAGES) * 100), 100);
 });
 
 const mapSize = computed(() => {
@@ -66,6 +66,11 @@ function handleMapClick (event) {
     observationsLink.value = feature.get("observationsNavigationLink");
 }
 
+function clearCache() {
+    sensorStore.clearSensorData();
+    window.location.reload();
+}
+
 onMounted(async () => {
     const cached = sensorStore.getSensorData();
 
@@ -90,10 +95,18 @@ onBeforeRouteLeave(() => {
 <template>
     <LayoutMap>
         <template #drawer>
-            <LayersDrawer>
+            <LayersDrawer class="pa-5">
                 Total items: {{ fois.size() }} <br />
                 Total request: {{ stats.totalRequests }} <br />
                 Total time: {{ Math.round(stats.totalTime) }} sec<br />
+                <GiBtn
+                    class="mt-5"
+                    size="small"
+                    variant="outlined"
+                    @click="clearCache"
+                >
+                    Clear Cache
+                </GiBtn>
             </LayersDrawer>
         </template>
 
