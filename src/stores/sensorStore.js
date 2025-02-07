@@ -8,7 +8,7 @@ export const useSensorStore = defineStore("sensor", () => {
     const geojson = new GeoJSON();
 
     function setSensorData(allSensors) {
-        const serialized =  LZString.compress(geojson.writeFeatures(allSensors.all()));
+        const serialized = LZString.compress(geojson.writeFeatures(allSensors.all()));
         localStorage.setItem("sensorData", serialized);
     }
 
@@ -23,5 +23,9 @@ export const useSensorStore = defineStore("sensor", () => {
         }
     }
 
-    return { setSensorData, getSensorData };
+    function clearSensorData() {
+        localStorage.removeItem("sensorData");
+    }
+
+    return { setSensorData, getSensorData, clearSensorData };
 });
