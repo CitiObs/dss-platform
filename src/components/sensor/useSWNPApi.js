@@ -7,19 +7,6 @@ export function useSWNPApi () {
 
     let abortController = null;
 
-    function categorizeByDatastreamId(observations) {
-        return observations.reduce((acc, observation) => {
-            const datastreamId = observation.Datastream["@iot.id"];
-    
-            if (!acc[datastreamId]) {
-                acc[datastreamId] = [];
-            }
-    
-            acc[datastreamId].push(observation);
-            return acc;
-        }, {});
-    }
-
     function abortRequest () {
         if (abortController) {
             // Abort the request and clear the abortController
@@ -28,21 +15,25 @@ export function useSWNPApi () {
         }
     }
 
-    async function getSensorObservations (observationsLink) {
-        // Create a new AbortController for this request
+    async function getSensorDatastreams (datastreamLink) {
+        //  Create a new AbortController for this request
         abortController = new AbortController();
 
-        const params = { $expand: "Datastream($expand=Thing,Sensor,License)" };
-    
+        const params = { 
+            $expand: "Observations($select=phenomenonTime,result),Thing($select=@iot.id,name),Sensor($select=name),License($select=name)", 
+            $orderby: "phenomenonTime desc" ,
+            $filter: "(ObservedProperty/definition eq 'http://vocabs.lter-europe.net/EnvThes/22035')",
+        };
+
         const { response, error } = await withAsync(
             api.get,
-            observationsLink,
+            datastreamLink,
             {
                 params,
                 signal: abortController.signal, // Attach the abort signal to the request
             }
         );
-    
+
         if (error) {
             // Only log unexpected errors
             if (error.code !== "ERR_CANCELED") {
@@ -51,26 +42,27 @@ export function useSWNPApi () {
             return;
         }
 
-        return response.data.value;
+        return response.data;
     }
 
-    async function getOverviewData (observationsLink) {
-        const observations = await getSensorObservations(observationsLink);
+    async function getOverviewData (datastreamLink) {
+        const datastream = await getSensorDatastreams(datastreamLink);
 
-        if (!observations?.length) return;
-
-        const datastream = observations[0].Datastream;
+        if (!datastream) return;
 
         const sensorInfo = {
+            metric: datastream.name,
+            unitOfMeasurement: datastream.unitOfMeasurement.symbol,
             thingId: datastream.Thing["@iot.id"],
             thingName: datastream.Thing.name,
+            sensorType: datastream.Sensor.name,
             dataOrigin: "citiobs_demo",
             license: datastream.License.name
         };
 
         return { 
             sensorInfo, 
-            observations: categorizeByDatastreamId(observations)
+            observations: datastream.Observations
         };
     }
 

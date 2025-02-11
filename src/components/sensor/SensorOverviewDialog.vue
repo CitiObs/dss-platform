@@ -1,7 +1,6 @@
 <script setup>
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { GiSelect } from "@geoint/geoint-vue";
 import { useKTUYApi } from "@/components/sensor/useKTUYApi.js";
 import { useSWNPApi } from "@/components/sensor/useSWNPApi.js";
 
@@ -29,50 +28,26 @@ const apiMapping = {
     SWNP: useSWNPApi(),
 };
 
-const overviewData = ref();
-const selectedMetric = ref();
+const overviewData = ref({});
 const isLoading = ref(false);
 
-const metricItems = computed(() => {
-    if (!overviewData.value?.observations) return [];
-
-    let items = [];
-
-    for (const [key, value] of Object.entries(overviewData.value.observations)) {
-        const metric = {
-            name: value[0].Datastream.name,
-            id: key
-        };
-        items.push(metric);
-    }
-
-    return items;
-});
-
 const chartData = computed(() => {
-    if (!overviewData.value?.observations) return [];
+    if (!overviewData.value.observations) return [];
 
-    return sortByPhenomenonTime(overviewData.value.observations[selectedMetric.value]);
+    return sortByPhenomenonTime(overviewData.value.observations);
 });
 
 const sensorInfo = computed(() => {
-    if (!overviewData.value?.sensorInfo) return;
+    if (!overviewData.value.sensorInfo) return;
 
     const lastIndex = chartData.value.length - 1;
     const latestData = chartData.value[lastIndex];
 
     const info = {
         ...overviewData.value.sensorInfo,
-        metric: latestData.Datastream.name,
         result: latestData.result,
-        unitOfMeasurement: latestData.Datastream.unitOfMeasurement.symbol,
         phenomenonTime: latestData.phenomenonTime,
     };
-
-    // SWNP sensor names vary for each measurement, while KTUY sensor names appear to remain consistent
-    if (props.apiCode === "SWNP") {
-        info.sensorType = chartData.value[lastIndex].Datastream.Sensor.name;
-    }
 
     return info;
 });
@@ -87,7 +62,7 @@ function sortByPhenomenonTime (observations) {
 
 async function handleDialogOpen () {
     // Clear overview data
-    overviewData.value = null;
+    overviewData.value = {};
 
     if (!props.observationsLink) return;
 
@@ -95,11 +70,6 @@ async function handleDialogOpen () {
 
     // Fetch overview data based on the provided API code
     overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.observationsLink);
-
-    // Set default selected metric if observations exist
-    if (overviewData.value?.observations) {
-        selectedMetric.value = metricItems.value[0]?.id;
-    }
 
     isLoading.value = false;
 }
@@ -131,31 +101,13 @@ watch(isDialogOpen, () => {
             <v-progress-circular indeterminate />
         </div>
 
-        <div v-else-if="metricItems.length">
-            <v-row>
-                <v-col
-                    cols="12"
-                    sm="3"
-                >
-                    <GiSelect
-                        v-model="selectedMetric"
-                        :label="t('sensor.metric')"
-                        :items="metricItems"
-                        item-title="name"
-                        item-value="id"
-                    />
-                </v-col>
-            </v-row>
-
+        <div v-else-if="sensorInfo && chartData.length">
             <v-row>
                 <v-col
                     cols="12"
                     sm="5"
                 >
-                    <SensorInfoTable
-                        v-if="sensorInfo"
-                        :sensor-info="sensorInfo"
-                    />
+                    <SensorInfoTable :sensor-info="sensorInfo" />
                 </v-col>
 
                 <v-col
@@ -163,7 +115,7 @@ watch(isDialogOpen, () => {
                     sm="7"
                 >
                     <SensorChart
-                        v-if="chartData.length"
+                        :metric="sensorInfo.metric"
                         :chart-data="chartData"
                     />
                 </v-col>

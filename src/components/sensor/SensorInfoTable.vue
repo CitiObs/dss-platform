@@ -33,7 +33,7 @@ const secondaryFields = computed(() => {
         },
         {
             label: t("sensor.sensorType"),
-            value: props.sensorInfo?.sensorType
+            value: props.sensorInfo.sensorType
         },
         {
             label: t("sensor.dataOrigin"),

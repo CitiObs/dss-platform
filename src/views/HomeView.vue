@@ -11,11 +11,18 @@ import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 import BaseDialog from "@/components/base/BaseDialog.vue";
 
+import { generateGrid, Extent } from "../helpers/grid";
+import { transformExtent } from "ol/proj";
+import {Circle, Fill, Stroke, Style} from "ol/style.js";
+
 const { getColor } = useGiColor();
 const sensorThingsApi = useSensorThingsApi();
 const sensorStore = useSensorStore();
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
+const gridFeatures = ref(new FeatureCollection());
+const thingsRaw = ref(new FeatureCollection());
+const thingsAggregated = ref(new FeatureCollection());
 const fois = ref(new FeatureCollection());
 const stats = ref({});
 const mapRef = ref();
@@ -37,13 +44,6 @@ const mapSize = computed(() => {
     };
 });
 
-const overrideStyleFunction = (feature, style) => {
-    const clusteredFeatures = feature.get("features");
-    const size = clusteredFeatures.length;
-    style.getText().setText(size.toString());
-    return style;
-};
-
 function getFeatures (event) {
     const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
     const features = featuresAtPixel.map(feature => feature.getProperties());
@@ -61,9 +61,10 @@ function handleMapClick (event) {
         return;
     }
 
-    const feature = clusteredFeatures[0].features[0]?.get("feature");
-    apiCode.value = feature.get("id").substring(0, 4);
-    observationsLink.value = feature.get("observationsNavigationLink");
+    const feature = clusteredFeatures[0];
+    // apiCode.value = feature.get("id").substring(0, 4);
+    apiCode.value = "SWNP";
+    observationsLink.value = feature.datastreamSelfLink;
 }
 
 function clearCache() {
@@ -71,18 +72,95 @@ function clearCache() {
     window.location.reload();
 }
 
-onMounted(async () => {
-    const cached = sensorStore.getSensorData();
+async function onMapViewChanged() {
+    const view = mapRef.value.map.getView();
+    const zoom = view.getZoom();
+    const extent3857 = view.calculateExtent();
+    const extent4326 = transformExtent(extent3857, "EPSG:3857", "EPSG:4326");
 
-    if (cached.size()) {
-        fois.value = cached;
-        return;
+    const viewExtent = new Extent(
+        extent4326[0],
+        extent4326[3],
+        extent4326[2],
+        extent4326[1]
+    );
+    const grid = generateGrid(viewExtent, zoom);
+    const features = new FeatureCollection(grid.toFeatures());
+    gridFeatures.value = features;
+
+    thingsAggregated.value = new FeatureCollection();
+    thingsRaw.value = new FeatureCollection();
+
+    for (const cell of grid) {
+        const features = await sensorThingsApi.getThings(stats.value, cell);
+
+        if (features.size() == 1 && features.first("count")) {
+            thingsAggregated.value.push(features.first());
+        } else {
+            features.all().forEach(feature => {
+                thingsRaw.value.push(feature);
+            });
+        }
     }
 
-    isInitialLoading.value = true;
-    await sensorThingsApi.getFOIs(fois.value, stats.value);
-    sensorStore.setSensorData(fois.value);
-    isInitialLoading.value = false;
+    console.log("all agr", thingsAggregated.value.pluck(["count"]));
+}
+
+function thingsRawStyle(feature, style) {
+    const fill1 = new Fill({
+        color: "#555",
+    });
+
+    const stroke1 = new Stroke({
+        color: "#555",
+        width: 1,
+    });
+
+    const fill2 = new Fill({
+        color: "#f00",
+    });
+
+    const stroke2 = new Stroke({
+        color: "#f00",
+        width: 1,
+    });   
+
+    if (feature.get("datastreams").length == 0) {
+        return new Style({
+            image: new Circle({
+                fill: fill1,
+                stroke: stroke1,
+                radius: 10,
+            })
+        });        
+    } else {
+        return new Style({
+            image: new Circle({
+                fill: fill2,
+                stroke: stroke2,
+                radius: 10,
+            })
+        });
+    }
+}
+
+function thingsAggregatedStyle(feature, style) {
+    style.getText().setText(feature.get("count").toString());
+    return style;
+}
+
+onMounted(async () => {
+    // const cached = sensorStore.getSensorData();
+
+    // if (cached.size()) {
+    //     fois.value = cached;
+    //     return;
+    // }
+
+    // isInitialLoading.value = true;
+    // await sensorThingsApi.getFOIs(fois.value, stats.value);
+    // sensorStore.setSensorData(fois.value);
+    // isInitialLoading.value = false;
 });
 
 onBeforeRouteLeave(() => {
@@ -116,6 +194,7 @@ onBeforeRouteLeave(() => {
                 :controls="[]"
                 :style="mapSize"
                 @click="handleMapClick"
+                @moveend="onMapViewChanged"
             >
                 <ol-view
                     :center="[0, 5000000]"
@@ -126,33 +205,44 @@ onBeforeRouteLeave(() => {
                     <ol-source-osm />
                 </ol-tile-layer>
 
-                <ol-vector-layer v-if="!isInitialLoading">
-                    <ol-source-cluster
-                        ref="clusterRef"
-                        :distance="60"
-                    >
-                        <ol-source-vector>
-                            <ol-feature
-                                v-for="(feature, index) in fois.all()"
-                                :key="index"
-                                :properties="{feature}"
-                            >
-                                <ol-geom-point :coordinates="feature.get('geometry').flatCoordinates" />
-                            </ol-feature>
-                        </ol-source-vector>
-                    </ol-source-cluster>
+                <ol-vector-layer>
+                    <ol-source-vector :features="gridFeatures.all()" />
+                    <ol-style>
+                        <ol-style-stroke
+                            color="#abc"
+                            :width="1"
+                        />
+                    </ol-style>
+                </ol-vector-layer>
 
-                    <ol-style :override-style-function="overrideStyleFunction">
-                        <ol-style-circle :radius="15">
-                            <ol-style-fill color="#3399CC" />
+                <ol-vector-layer>
+                    <ol-source-vector :features="thingsAggregated.all()" />
+                    <ol-style :override-style-function="thingsAggregatedStyle">
+                        <ol-style-circle radius="20">
+                            <ol-style-fill color="#70d4d0" />
                             <ol-style-stroke
-                                color="#fff"
-                                :width="1"
+                                color="#70d4d0"
+                                width="1"
                             />
                         </ol-style-circle>
-                        <ol-style-text font="14px sans-serif">
-                            <ol-style-fill color="#fff" />
-                        </ol-style-text>
+                        <ol-style-text
+                            text="10"
+                            font="16px sans-serif"
+                            fill="#000"
+                        />
+                    </ol-style>
+                </ol-vector-layer>
+
+                <ol-vector-layer>
+                    <ol-source-vector :features="thingsRaw.all()" />
+                    <ol-style :override-style-function="thingsRawStyle">
+                        <ol-style-circle radius="10">
+                            <ol-style-fill color="#008480" />
+                            <ol-style-stroke
+                                color="#008480"
+                                width="1"
+                            />
+                        </ol-style-circle>
                     </ol-style>
                 </ol-vector-layer>
             </ol-map>

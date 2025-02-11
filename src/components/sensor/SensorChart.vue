@@ -3,6 +3,10 @@ import { computed } from "vue";
 import { GiApexChart } from "@geoint/geoint-vue";
 
 const props = defineProps({
+    metric: {
+        type: String,
+        default: ""
+    },
     chartData: {
         type: Array,
         required: true
@@ -29,7 +33,7 @@ const chartSeries = computed(() => {
     });
 
     return [{
-        name: props.chartData[0].Datastream.name,
+        name: props.metric,
         data: series
     }];
 });
