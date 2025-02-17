@@ -14,7 +14,7 @@ const props = defineProps({
         type: String,
         default: ""
     },
-    observationsLink: {
+    datastreamLink: {
         type: String,
         default: ""
     },
@@ -64,12 +64,12 @@ async function handleDialogOpen () {
     // Clear overview data
     overviewData.value = {};
 
-    if (!props.observationsLink) return;
+    if (!props.datastreamLink) return;
 
     isLoading.value = true;
 
     // Fetch overview data based on the provided API code
-    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.observationsLink);
+    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink);
 
     isLoading.value = false;
 }

@@ -1,21 +1,18 @@
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
-import { FeatureCollection, useGiColor, GiBtn } from "@geoint/geoint-vue";
-import { useSensorThingsApi, MAX_PAGES } from "@/composables/api/useSensorThingsApi";
+import { FeatureCollection, GiBtn } from "@geoint/geoint-vue";
+import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { useSensorStore } from "@/stores/sensorStore.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
-
-import LayersDrawer from "@/components/layout/LayersDrawer.vue";
-import LayoutMap from "@/layouts/LayoutMap.vue";
-import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
-import BaseDialog from "@/components/base/BaseDialog.vue";
-
 import { generateGrid, Extent } from "../helpers/grid";
 import { transformExtent } from "ol/proj";
 import {Circle, Fill, Stroke, Style} from "ol/style.js";
 
-const { getColor } = useGiColor();
+import LayersDrawer from "@/components/layout/LayersDrawer.vue";
+import LayoutMap from "@/layouts/LayoutMap.vue";
+import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
+
 const sensorThingsApi = useSensorThingsApi();
 const sensorStore = useSensorStore();
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
@@ -23,19 +20,12 @@ const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height
 const gridFeatures = ref(new FeatureCollection());
 const thingsRaw = ref(new FeatureCollection());
 const thingsAggregated = ref(new FeatureCollection());
-const fois = ref(new FeatureCollection());
 const stats = ref({});
 const mapRef = ref();
 const clusterRef = ref();
 const apiCode = ref();
-const observationsLink = ref();
+const datastreamLink = ref();
 const isSensorOverviewDialog = ref(false);
-const isInitialLoading = ref(false);
-
-const loadingProgress = computed(() => {
-    if (!stats.value.totalRequests) return "";
-    return Math.min(Math.trunc((stats.value.totalRequests / MAX_PAGES) * 100), 100);
-});
 
 const mapSize = computed(() => {
     return {
@@ -44,27 +34,21 @@ const mapSize = computed(() => {
     };
 });
 
-function getFeatures (event) {
+function getFeatureProperties (event) {
     const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
-    const features = featuresAtPixel.map(feature => feature.getProperties());
+    const featureProperties = featuresAtPixel.map(feature => feature.getProperties());
 
-    return features;
+    return featureProperties;
 }
 
 function handleMapClick (event) {
-    isSensorOverviewDialog.value = true;
-    const clusteredFeatures = getFeatures(event);
+    const clickedThings = getFeatureProperties(event);
 
-    if (!clusteredFeatures.length) {
-        apiCode.value = "";
-        observationsLink.value = "";
-        return;
-    }
+    if (!clickedThings.length) return;
 
-    const feature = clusteredFeatures[0];
-    // apiCode.value = feature.get("id").substring(0, 4);
     apiCode.value = "SWNP";
-    observationsLink.value = feature.datastreamSelfLink;
+    datastreamLink.value = clickedThings[0].datastreamSelfLink;
+    isSensorOverviewDialog.value = true;
 }
 
 function clearCache() {
@@ -149,20 +133,6 @@ function thingsAggregatedStyle(feature, style) {
     return style;
 }
 
-onMounted(async () => {
-    // const cached = sensorStore.getSensorData();
-
-    // if (cached.size()) {
-    //     fois.value = cached;
-    //     return;
-    // }
-
-    // isInitialLoading.value = true;
-    // await sensorThingsApi.getFOIs(fois.value, stats.value);
-    // sensorStore.setSensorData(fois.value);
-    // isInitialLoading.value = false;
-});
-
 onBeforeRouteLeave(() => {
     const vectorSource = clusterRef.value.source.getSource();
     vectorSource.clear(true);
@@ -174,7 +144,7 @@ onBeforeRouteLeave(() => {
     <LayoutMap>
         <template #drawer>
             <LayersDrawer class="pa-5">
-                Total items: {{ fois.size() }} <br />
+                Total items: {{ thingsAggregated.size() + thingsRaw.size() }} <br />
                 Total request: {{ stats.totalRequests }} <br />
                 Total time: {{ Math.round(stats.totalTime) }} sec<br />
                 <GiBtn
@@ -251,28 +221,7 @@ onBeforeRouteLeave(() => {
         <SensorOverviewDialog
             v-model="isSensorOverviewDialog"
             :api-code="apiCode"
-            :observations-link="observationsLink"
+            :datastream-link="datastreamLink"
         />
-
-        <BaseDialog
-            v-model="isInitialLoading"
-            :title="$t('home.welcomeToCitiobs')"
-            :max-width="800"
-            :can-close="false"
-            persistent
-        >
-            <p class="text-center mb-4">
-                {{ $t("home.loadingMapData") }}
-            </p>
-
-            <v-progress-linear
-                v-model="loadingProgress"
-                :color="getColor('primary-300')"
-                height="25"
-                class="rounded"
-            >
-                <strong>{{ `${loadingProgress}%` }}</strong>
-            </v-progress-linear>
-        </BaseDialog>
     </LayoutMap>
 </template>

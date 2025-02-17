@@ -3,8 +3,6 @@ import { GeoJSON } from "ol/format";
 import { withAsync, FeatureCollection } from "@geoint/geoint-vue";
 import cloneDeep from "lodash-es/cloneDeep";
 
-export const MAX_PAGES = 225;
-
 const BASE_URLS = [
     // "https://api-samenmeten.rivm.nl/v1.0/",
     "https://citiobs.demo.secure-dimensions.de/staplustest/v1.1",
@@ -18,51 +16,54 @@ function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
+function thingsToGeoJSON (things, projection) {
+    const plainFeatures = {
+        type: "FeatureCollection",
+        features: [],
+    };
+
+    for (const thing of things) {
+        const locationData = thing.Locations[0]?.location;
+        if (!locationData) continue;
+
+        const geometry = cloneDeep(locationData);
+        geometry.type = capitalize(geometry.type);
+
+        const properties = {
+            ...cloneDeep(thing.properties), // Clone original properties
+            id: thing["@iot.id"],
+            selfLink: thing["@iot.selfLink"],
+            datastreamSelfLink: thing.Datastreams[0]?.["@iot.selfLink"],
+            observationsNavigationLink: thing.Datastreams[0]?.["Observations@iot.navigationLink"],
+            name: thing.name,
+            description: thing.description,
+            datastreams: thing.Datastreams
+        };
+
+        const feature = {
+            type: "Feature",
+            geometry,
+            properties,
+        };
+
+        plainFeatures.features.push(feature);
+    }
+
+    const olFeatures = new GeoJSON().readFeatures(plainFeatures, { featureProjection: projection });
+
+    return olFeatures;
+}
+
 export function useSensorThingsApi(projection = "EPSG:3857") {
     const geoint = inject("geoint");
     let abortController = null;
 
-    const foisToGeoJSON = (fois) => {
-        const plainFeatures = {
-            type: "FeatureCollection",
-            features: [],
-        };
-
-        for (const foi of fois) {
-            const locationData = foi.Locations[0]?.location;
-            if (!locationData) continue;
-
-            const geometry = cloneDeep(locationData);
-            geometry.type = capitalize(geometry.type);
-
-            const properties = {
-                ...cloneDeep(foi.properties), // Clone original properties
-                id: foi["@iot.id"],
-                selfLink: foi["@iot.selfLink"],
-                datastreamSelfLink: foi.Datastreams[0]?.["@iot.selfLink"],
-                observationsNavigationLink: foi.Datastreams[0]?.["Observations@iot.navigationLink"],
-                name: foi.name,
-                description: foi.description,
-                datastreams: foi.Datastreams
-                // encodingType: foi.encodingType,
-            };
-
-            const feature = {
-                type: "Feature",
-                geometry,
-                properties,
-            };
-
-            plainFeatures.features.push(feature);
+    const getThings = async (stats, cell) => {
+        if (abortController) {
+            abortController.abort();
         }
 
-        const olFeatures = new GeoJSON().readFeatures(plainFeatures, { featureProjection: projection });
-
-        return olFeatures;
-    };
-
-    const getThings = async (stats, cell) => {
-        abortRequest();
+        abortController = new AbortController();
         stats.startTime = new Date().getTime();
         stats.totalRequests = 0;
 
@@ -72,7 +73,6 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         let collection = new FeatureCollection();
         let areMoreItemsToFetch = false;
         let totalItems = 0;
-        abortController = new AbortController();
 
         const requests = BASE_URLS.map(async (url) => {
             const { response, error } = await withAsync(api.get, `${url}/Things`, {
@@ -94,15 +94,13 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
                 return;
             }
 
-            let data = response.data;
-
-            if (data["@iot.count"] > MAX_ITEMS) {
-                totalItems += data["@iot.count"];
+            if (response.data["@iot.count"] > MAX_ITEMS) {
+                totalItems += response.data["@iot.count"];
                 areMoreItemsToFetch = true;
                 return;
             }
 
-            for (const feature of foisToGeoJSON(data.value)) {
+            for (const feature of thingsToGeoJSON(response.data.value, projection)) {
                 collection._features.push(feature);
             }
         });
@@ -123,13 +121,6 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         stats.totalTime = (new Date().getTime() - stats.startTime) / 1000;
         return collection;
     };
-
-    function abortRequest() {
-        if (abortController) {
-            abortController.abort();
-            abortController = null;
-        }
-    }
 
     return {
         getThings,
