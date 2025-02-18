@@ -53,8 +53,8 @@ const sensorInfo = computed(() => {
 
     const info = {
         ...overviewData.value.sensorInfo,
-        result: latestData.result,
-        phenomenonTime: latestData.phenomenonTime,
+        result: latestData?.result,
+        phenomenonTime: latestData?.phenomenonTime,
     };
 
     return info;
