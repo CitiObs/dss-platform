@@ -15,7 +15,6 @@ import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 
 const sensorThingsApi = useSensorThingsApi();
-const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
 const mapGrid = ref();
 const allThingsByCollection = ref([]);
@@ -26,6 +25,22 @@ const apiCode = ref();
 const datastreamLink = ref();
 const thingLink = ref();
 const isSensorOverviewDialog = ref(false);
+
+const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
+const COLOR_LIMITS = [
+    {
+        max: 10,
+        color: "#00bfff",
+    },
+    {
+        max: 20,
+        color: "#0080ff",
+    },
+    {
+        max: 30,
+        color: "#ff00ff",
+    },
+];
 
 const mapSize = computed(() => {
     return {
@@ -67,41 +82,34 @@ const thingsRaw = computed(() => {
 });
 
 function thingsRawStyle(feature) {
-    const fill1 = new Fill({
-        color: "#555",
-    });
+    const observations = feature.get("datastreams")?.[0]?.Observations;
 
-    const stroke1 = new Stroke({
-        color: "#555",
-        width: 1,
-    });
-
-    const fill2 = new Fill({
-        color: "#f00",
-    });
-
-    const stroke2 = new Stroke({
-        color: "#f00",
-        width: 1,
-    });   
-
-    if (feature.get("datastreams").length == 0) {
+    if (!observations?.length) {
         return new Style({
             image: new Circle({
-                fill: fill1,
-                stroke: stroke1,
+                fill: new Fill({ color: "#555" }),
+                stroke: new Stroke({ color: "#555", width: 1 }),
                 radius: 10,
-            })
-        });        
-    } else {
-        return new Style({
-            image: new Circle({
-                fill: fill2,
-                stroke: stroke2,
-                radius: 10,
-            })
+            }),
         });
     }
+
+    const color = getColorForResult(observations[0].result);
+
+    return new Style({
+        image: new Circle({
+            fill: new Fill({ color }),
+            stroke: new Stroke({ color, width: 1 }),
+            radius: 10,
+        }),
+    });
+}
+
+function getColorForResult (result) {
+    for (const { max, color } of COLOR_LIMITS) {
+        if (result <= max) return color;
+    }
+    return "#FF0000"; // Default color if result is greater than all limits
 }
 
 function thingsAggregatedStyle(feature, style) {
