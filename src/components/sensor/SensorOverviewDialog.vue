@@ -18,6 +18,10 @@ const props = defineProps({
         type: String,
         default: ""
     },
+    thingLink: {
+        type: String,
+        default: ""
+    }
 });
 
 const isDialogOpen = defineModel({ type: Boolean, required: true });
@@ -64,12 +68,12 @@ async function handleDialogOpen () {
     // Clear overview data
     overviewData.value = {};
 
-    if (!props.datastreamLink) return;
+    if (!props.datastreamLink || !props.thingLink) return;
 
     isLoading.value = true;
 
     // Fetch overview data based on the provided API code
-    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink);
+    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink, props.thingLink);
 
     isLoading.value = false;
 }

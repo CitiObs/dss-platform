@@ -25,6 +25,7 @@ const mapRef = ref();
 const clusterRef = ref();
 const apiCode = ref();
 const datastreamLink = ref();
+const thingLink = ref();
 const isSensorOverviewDialog = ref(false);
 
 const mapSize = computed(() => {
@@ -48,6 +49,7 @@ function handleMapClick (event) {
 
     apiCode.value = "SWNP";
     datastreamLink.value = clickedThings[0].datastreamSelfLink;
+    thingLink.value = clickedThings[0].selfLink;
     isSensorOverviewDialog.value = true;
 }
 
@@ -222,6 +224,7 @@ onBeforeRouteLeave(() => {
             v-model="isSensorOverviewDialog"
             :api-code="apiCode"
             :datastream-link="datastreamLink"
+            :thing-link="thingLink"
         />
     </LayoutMap>
 </template>
