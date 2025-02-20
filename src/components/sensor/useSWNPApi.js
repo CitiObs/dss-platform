@@ -1,5 +1,6 @@
 import { inject } from "vue";
 import { withAsync } from "@geoint/geoint-vue";
+import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 
 export function useSWNPApi () {
     const geoint = inject("geoint");
@@ -90,10 +91,10 @@ export function useSWNPApi () {
         return response.data;
     }
 
-    async function getSensorDatastreams (datastreamLink) {
+    async function getSensorDatastreams (datastreamLink, metric) {
         const params = { 
             $expand: "Observations($select=phenomenonTime,result;$orderby=phenomenonTime desc),Thing($select=@iot.id,name),Sensor($select=name),License($select=name)",
-            $filter: "(ObservedProperty/definition eq 'http://vocabs.lter-europe.net/EnvThes/22035')",
+            $filter: `(ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}')`,
         };
 
         const { response, error } = await withAsync(
@@ -116,12 +117,12 @@ export function useSWNPApi () {
         return response.data;
     }
 
-    async function getOverviewData (datastreamLink, thingLink) {
+    async function getOverviewData (datastreamLink, thingLink, metric) {
         //  Create a new AbortController for these requests
         abortController = new AbortController();
 
         const [datastream, locations] = await Promise.all([
-            getSensorDatastreams(datastreamLink),
+            getSensorDatastreams(datastreamLink, metric),
             getSensorLocations(thingLink)
         ]);
 

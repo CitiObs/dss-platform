@@ -21,6 +21,10 @@ const props = defineProps({
     thingLink: {
         type: String,
         default: ""
+    },
+    sensorMetric: {
+        type: String,
+        required: true
     }
 });
 
@@ -73,7 +77,7 @@ async function handleDialogOpen () {
     isLoading.value = true;
 
     // Fetch overview data based on the provided API code
-    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink, props.thingLink);
+    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink, props.thingLink, props.sensorMetric);
 
     isLoading.value = false;
 }

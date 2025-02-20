@@ -1,26 +1,27 @@
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
-import { FeatureCollection, GiBtn } from "@geoint/geoint-vue";
+import { FeatureCollection } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
-import { useSensorStore } from "@/stores/sensorStore.js";
+// import { useSensorStore } from "@/stores/sensorStore.js";
+import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 import { generateGrid, Extent } from "../helpers/grid";
 import { transformExtent } from "ol/proj";
-import {Circle, Fill, Stroke, Style} from "ol/style.js";
+import { Circle, Fill, Stroke, Style } from "ol/style.js";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
+import MapFilters from "@/components/MapFilters.vue";
 import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 
 const sensorThingsApi = useSensorThingsApi();
-const sensorStore = useSensorStore();
+// const sensorStore = useSensorStore();
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
-const gridFeatures = ref(new FeatureCollection());
-const thingsRaw = ref(new FeatureCollection());
-const thingsAggregated = ref(new FeatureCollection());
-const stats = ref({});
+const mapGrid = ref();
+const allThingsByCollection = ref([]);
+const sensorMetric = ref(Object.keys(SENSOR_DEFINITIONS)[0]);
 const mapRef = ref();
 const clusterRef = ref();
 const apiCode = ref();
@@ -35,62 +36,37 @@ const mapSize = computed(() => {
     };
 });
 
-function getFeatureProperties (event) {
-    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
-    const featureProperties = featuresAtPixel.map(feature => feature.getProperties());
+const gridFeatures = computed(() => {
+    if (!mapGrid.value) return new FeatureCollection();
 
-    return featureProperties;
-}
+    return new FeatureCollection(mapGrid.value.toFeatures());
+});
 
-function handleMapClick (event) {
-    const clickedThings = getFeatureProperties(event);
+const thingsAggregated = computed(() => {
+    const things = new FeatureCollection();
 
-    if (!clickedThings.length) return;
-
-    apiCode.value = "SWNP";
-    datastreamLink.value = clickedThings[0].datastreamSelfLink;
-    thingLink.value = clickedThings[0].selfLink;
-    isSensorOverviewDialog.value = true;
-}
-
-function clearCache() {
-    sensorStore.clearSensorData();
-    window.location.reload();
-}
-
-async function onMapViewChanged() {
-    const view = mapRef.value.map.getView();
-    const zoom = view.getZoom();
-    const extent3857 = view.calculateExtent();
-    const extent4326 = transformExtent(extent3857, "EPSG:3857", "EPSG:4326");
-
-    const viewExtent = new Extent(
-        extent4326[0],
-        extent4326[3],
-        extent4326[2],
-        extent4326[1]
-    );
-    const grid = generateGrid(viewExtent, zoom);
-    const features = new FeatureCollection(grid.toFeatures());
-    gridFeatures.value = features;
-
-    thingsAggregated.value = new FeatureCollection();
-    thingsRaw.value = new FeatureCollection();
-
-    for (const cell of grid) {
-        const features = await sensorThingsApi.getThings(stats.value, cell);
-
+    allThingsByCollection.value.forEach(features => {
         if (features.size() == 1 && features.first("count")) {
-            thingsAggregated.value.push(features.first());
-        } else {
+            things.push(features.first());
+        }
+    });
+
+    return things;
+});
+
+const thingsRaw = computed(() => {
+    const things = new FeatureCollection();
+
+    allThingsByCollection.value.forEach(features => {
+        if (!features.first("count")) {
             features.all().forEach(feature => {
-                thingsRaw.value.push(feature);
+                things.push(feature);
             });
         }
-    }
+    });
 
-    console.log("all agr", thingsAggregated.value.pluck(["count"]));
-}
+    return things;
+});
 
 function thingsRawStyle(feature, style) {
     const fill1 = new Fill({
@@ -135,6 +111,61 @@ function thingsAggregatedStyle(feature, style) {
     return style;
 }
 
+function getFeatureProperties (event) {
+    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
+    const featureProperties = featuresAtPixel.map(feature => feature.getProperties());
+
+    return featureProperties;
+}
+
+function handleMapClick (event) {
+    const clickedThings = getFeatureProperties(event);
+
+    if (!clickedThings.length) return;
+
+    apiCode.value = "SWNP";
+    datastreamLink.value = clickedThings[0].datastreamSelfLink;
+    thingLink.value = clickedThings[0].selfLink;
+    isSensorOverviewDialog.value = true;
+}
+
+function setMapGrid () {
+    const view = mapRef.value.map.getView();
+    const zoom = view.getZoom();
+    const extent3857 = view.calculateExtent();
+    const extent4326 = transformExtent(extent3857, "EPSG:3857", "EPSG:4326");
+
+    const viewExtent = new Extent(
+        extent4326[0],
+        extent4326[3],
+        extent4326[2],
+        extent4326[1]
+    );
+
+    mapGrid.value = generateGrid(viewExtent, zoom);
+}
+
+async function fetchAllThings () {
+    allThingsByCollection.value = [];
+
+    for (const cell of mapGrid.value) {
+        const features = await sensorThingsApi.getThings(sensorMetric.value, cell);
+
+        if (!features) continue;
+
+        allThingsByCollection.value.push(features);
+    }
+}
+
+async function onMapViewChanged() {
+    setMapGrid();
+    await fetchAllThings();
+}
+
+watch(sensorMetric, async () => {
+    await fetchAllThings();
+});
+
 onBeforeRouteLeave(() => {
     const vectorSource = clusterRef.value.source.getSource();
     vectorSource.clear(true);
@@ -146,17 +177,7 @@ onBeforeRouteLeave(() => {
     <LayoutMap>
         <template #drawer>
             <LayersDrawer class="pa-5">
-                Total items: {{ thingsAggregated.size() + thingsRaw.size() }} <br />
-                Total request: {{ stats.totalRequests }} <br />
-                Total time: {{ Math.round(stats.totalTime) }} sec<br />
-                <GiBtn
-                    class="mt-5"
-                    size="small"
-                    variant="outlined"
-                    @click="clearCache"
-                >
-                    Clear Cache
-                </GiBtn>
+                <MapFilters v-model:sensor-metric="sensorMetric" />
             </LayersDrawer>
         </template>
 
@@ -225,6 +246,7 @@ onBeforeRouteLeave(() => {
             :api-code="apiCode"
             :datastream-link="datastreamLink"
             :thing-link="thingLink"
+            :sensor-metric="sensorMetric"
         />
     </LayoutMap>
 </template>

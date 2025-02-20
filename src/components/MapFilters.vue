@@ -1,42 +1,45 @@
 <script setup>
-import { ref } from "vue";
+import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 
-const quantity = ref("Air Temperature");
-const quality = ref(0);
-const corrected = ref(0);
+const sensorMetric = defineModel("sensorMetric", { type: String, required: true });
 
-const quantityItems = [
-    "Air Temperature",
-    "PM10",
-    "PM2.5",
-    "Relative Humidity",
-    "Barometric Pressure",
-    "Nitrogen Dioxide",
-    "Ammonia",
-    "Noise Level",
-    "Ambient Light"
-];
-const qualityItems = ["A", "B", "C", "D"];
-const correctedItems = ["0", "1", "2"];
+// import { ref } from "vue";
+
+// const quality = ref(0);
+// const corrected = ref(0);
+
+// const quantityItems = [
+//     "Air Temperature",
+//     "PM10",
+//     "PM2.5",
+//     "Relative Humidity",
+//     "Barometric Pressure",
+//     "Nitrogen Dioxide",
+//     "Ammonia",
+//     "Noise Level",
+//     "Ambient Light"
+// ];
+// const qualityItems = ["A", "B", "C", "D"];
+// const correctedItems = ["0", "1", "2"];
 
 </script>
 
 <template>
     <div class="pa-4">
         <p class="header-spacing">
-            Quantity
+            Sensor Metrics
         </p>
 
-        <v-radio-group v-model="quantity">
+        <v-radio-group v-model="sensorMetric">
             <v-radio
-                v-for="(item, index) in quantityItems"
-                :key="index"
-                :label="item"
-                :value="item"
+                v-for="(item, key) in SENSOR_DEFINITIONS"
+                :key="key"
+                :label="item.label"
+                :value="key"
             />
         </v-radio-group>
 
-        <p class="header-spacing">
+        <!-- <p class="header-spacing">
             Quality
         </p>
 
@@ -74,7 +77,7 @@ const correctedItems = ["0", "1", "2"];
             >
                 {{ item }}
             </v-btn>
-        </v-btn-toggle>
+        </v-btn-toggle> -->
     </div>
 </template>
 
