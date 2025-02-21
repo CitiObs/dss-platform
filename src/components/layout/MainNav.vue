@@ -6,22 +6,6 @@ const navItems = [
         name: "home",
         path: "/",
     },
-    {
-        name: "information",
-        path: "/information",
-    },
-    {
-        name: "about",
-        path: "/about",
-    },
-    {
-        name: "wearables",
-        path: "/wearables",
-    },
-    {
-        name: "showcase",
-        path: "/showcase",
-    },
 ];
 </script>
 

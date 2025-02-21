@@ -1,10 +1,6 @@
 export default {
     routes: {
         home: "Αρχική",
-        showcase: "Παραδείγματα",
-        information: "Πληροφορίες",
-        about: "Σχετικά με εμάς",
-        wearables: "Φορητές Συσκευές",
     },
 
     sensor: {
