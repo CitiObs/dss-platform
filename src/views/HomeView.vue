@@ -68,6 +68,56 @@ const thingsRaw = computed(() => {
     return things;
 });
 
+// function handleMapClick (event) {
+//     const clickedThings = getFeatureProperties(event);
+
+//     if (!clickedThings.length) return;
+
+//     apiCode.value = "SWNP";
+//     datastreamLink.value = clickedThings[0].datastreamSelfLink;
+//     thingLink.value = clickedThings[0].selfLink;
+//     isSensorOverviewDialog.value = true;
+// }
+
+// function clearCache() {
+//     sensorStore.clearSensorData();
+//     window.location.reload();
+// }
+
+// async function onMapViewChanged() {
+//     const view = mapRef.value.map.getView();
+//     const zoom = view.getZoom();
+//     const extent3857 = view.calculateExtent();
+//     const extent4326 = transformExtent(extent3857, "EPSG:3857", "EPSG:4326");
+
+//     const viewExtent = new Extent(
+//         extent4326[0],
+//         extent4326[3],
+//         extent4326[2],
+//         extent4326[1]
+//     );
+
+//     const roundedZoom = Math.round(zoom);
+//     const grid = generateGrid(viewExtent, roundedZoom);
+//     const features = new FeatureCollection(grid.toFeatures());
+//     gridFeatures.value = features;
+
+//     thingsAggregated.value = new FeatureCollection();
+//     thingsRaw.value = new FeatureCollection();
+
+//     const thingCollections = await sensorThingsApi.getThingCollections(stats.value, grid);
+
+//     thingCollections.forEach(collection => {
+//         if (collection.size() == 1 && collection.first("count")) {
+//             thingsAggregated.value.push(collection.first());
+//         } else {
+//             collection.all().forEach(feature => {
+//                 thingsRaw.value.push(feature);
+//             });
+//         }
+//     });
+// }
+
 function thingsRawStyle(feature, style) {
     const fill1 = new Fill({
         color: "#555",
@@ -142,7 +192,9 @@ function setMapGrid () {
         extent4326[1]
     );
 
-    mapGrid.value = generateGrid(viewExtent, zoom);
+    // mapGrid.value = generateGrid(viewExtent, zoom);
+    const roundedZoom = Math.round(zoom);
+    mapGrid.value = generateGrid(viewExtent, roundedZoom);
 }
 
 async function fetchAllThings () {
@@ -193,6 +245,7 @@ onBeforeRouteLeave(() => {
                     :center="[0, 5000000]"
                     :zoom="3"
                     :extent="[-20000000, -15000000, 20000000, 19000000]"
+                    :max-zoom="17"
                 />
 
                 <ol-tile-layer>
