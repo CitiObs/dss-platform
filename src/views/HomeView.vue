@@ -192,6 +192,7 @@ onBeforeRouteLeave(() => {
                 <ol-view
                     :center="[0, 5000000]"
                     :zoom="3"
+                    :extent="[-20000000, -15000000, 20000000, 19000000]"
                 />
 
                 <ol-tile-layer>
