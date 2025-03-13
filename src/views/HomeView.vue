@@ -13,6 +13,7 @@ import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import MapFilters from "@/components/MapFilters.vue";
 import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
+import GiScale from "@geoint/geoint-vue/src/components/geoint/scale/GiScale.vue";
 
 const sensorThingsApi = useSensorThingsApi();
 
@@ -27,20 +28,6 @@ const thingLink = ref();
 const isSensorOverviewDialog = ref(false);
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
-const COLOR_LIMITS = [
-    {
-        max: 10,
-        color: "#00bfff",
-    },
-    {
-        max: 20,
-        color: "#0080ff",
-    },
-    {
-        max: 30,
-        color: "#ff00ff",
-    },
-];
 
 const mapSize = computed(() => {
     return {
@@ -81,6 +68,16 @@ const thingsRaw = computed(() => {
     return things;
 });
 
+const scale = computed(() => {
+    if (SENSOR_DEFINITIONS[sensorMetric.value].scale) {
+        console.log(SENSOR_DEFINITIONS[sensorMetric.value].scale);
+        return SENSOR_DEFINITIONS[sensorMetric.value].scale;
+    }
+    return null;
+});
+
+console.log(typeof scale.value);
+
 function thingsRawStyle(feature) {
     const observations = feature.get("datastreams")?.[0]?.Observations;
 
@@ -94,7 +91,14 @@ function thingsRawStyle(feature) {
         });
     }
 
-    const color = getColorForResult(observations[0].result);
+    let color = "#30c050"; // Default color if no scale is defined
+
+    if (scale.value) {
+        const matchingItem = scale.value.getAttributes(observations[0].result);
+        if (matchingItem) {
+            color = matchingItem.color;
+        }
+    }
 
     return new Style({
         image: new Circle({
@@ -103,13 +107,6 @@ function thingsRawStyle(feature) {
             radius: 10,
         }),
     });
-}
-
-function getColorForResult (result) {
-    for (const { max, color } of COLOR_LIMITS) {
-        if (result <= max) return color;
-    }
-    return "#FF0000"; // Default color if result is greater than all limits
 }
 
 function thingsAggregatedStyle(feature, style) {
@@ -185,6 +182,12 @@ onBeforeRouteLeave(() => {
         <template #drawer>
             <LayersDrawer class="pa-5">
                 <MapFilters v-model:sensor-metric="sensorMetric" />
+                <GiScale
+                    v-if="scale"
+                    :scale="scale"
+                    value="-9999"
+                    vertical
+                />
             </LayersDrawer>
         </template>
 
