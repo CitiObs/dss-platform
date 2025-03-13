@@ -33,4 +33,7 @@ export default defineConfig({
         __VUE_I18N_PROD_DEVTOOLS__: false,
         __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: true,
     },
+    server: {
+        allowedHosts: true,
+    },
 });
