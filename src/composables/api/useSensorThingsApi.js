@@ -14,8 +14,6 @@ const BASE_URLS = [
 
 const MAX_ITEMS = 20;
 
-let abortController = null;
-
 function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
@@ -59,29 +57,13 @@ function thingsToGeoJSON (things, projection) {
 }
 
 async function fetchThingsFromAllApis (params, api) {
-    if (abortController) {
-        abortController.abort();
-    }
-
-    // const getThings = async (metric, cell) => {
-    //     if (abortController) {
-    //         abortController.abort();
-    //     }
-
-    //     abortController = new AbortController();
-    // abortController = new AbortController();
-
     const requests = BASE_URLS.map(async (url) => {
         const { response, error } = await withAsync(api.get, `${url}/Things`, {
             params,
-            signal: abortController.signal,
         });
 
         if (error) {
-            // Only log unexpected errors
-            if (error.code !== "ERR_CANCELED") {
-                console.error(error);
-            }
+            console.error(error);
             return;
         }
 
@@ -98,26 +80,10 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
     const geoint = inject("geoint");
     const api = geoint.api("virtualair");
 
-    const getThingCollections = async (metric, cell) => {
-        // stats.startTime = new Date().getTime();
-        // stats.totalRequests = 0;
-
-        let allCollections = [];
-
-        // for (const cell of grid) {
+    const getThings = async (metric, cell) => {
         let collection = new FeatureCollection();
         let totalItems = 0;
         let areMoreItemsToFetch = false;
-
-        // const requests = BASE_URLS.map(async (url) => {
-        //     const { response, error } = await withAsync(api.get, `${url}/Things`, {
-        //         params: {
-        //             $expand: `Datastreams($select=@iot.selfLink;$filter=ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}';$expand=ObservedProperty($select=definition),Observations($top=1;$orderby=phenomenonTime desc;$select=phenomenonTime,result),Thing($select=@iot.id),Sensor($select=@iot.id)), Locations($select=location)`,
-        //             $filter: `st_within(Locations/location, geography'${polygon}')`,
-        //             $count: true,
-        //             $top: MAX_ITEMS,
-        //         },
-        //         signal: abortController.signal,
 
         const polygon = cell.toWKT();
         const params = {
@@ -135,9 +101,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
                 collection.push(feature);
             });
 
-            allCollections.push(collection);
-            // continue;
-            return allCollections;
+            return collection;
         }
 
         const thingsFromAllApis = await fetchThingsFromAllApis(params, api);
@@ -167,16 +131,12 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             );
         }
 
-        allCollections.push(collection);
         sensorStore.setSensorData(paramsKey, collection, new Date());
-        // }
 
-        // return collection;
-        // stats.totalTime = (new Date().getTime() - stats.startTime) / 1000;
-        return allCollections;
+        return collection;
     };
 
     return {
-        getThingCollections,
+        getThings,
     };
 }
