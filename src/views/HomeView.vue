@@ -70,13 +70,10 @@ const thingsRaw = computed(() => {
 
 const scale = computed(() => {
     if (SENSOR_DEFINITIONS[sensorMetric.value].scale) {
-        console.log(SENSOR_DEFINITIONS[sensorMetric.value].scale);
         return SENSOR_DEFINITIONS[sensorMetric.value].scale;
     }
     return null;
 });
-
-console.log(typeof scale.value);
 
 function thingsRawStyle(feature) {
     const observations = feature.get("datastreams")?.[0]?.Observations;
