@@ -37,6 +37,15 @@ export const SENSOR_DEFINITIONS = {
     ambientLight: {
         label: "Ambient Light",
         link: "https://qudt.org/vocab/quantitykind/LuminousExposure",
+        scale: new Scale([
+            createScaleItem("(10000,)", { color: "#ffff00", label: "10K..100K" }),
+            createScaleItem("(1000,10000]", { color: "#97f554", label: "1000..10K" }),
+            createScaleItem("(100,1000]", { color: "#18dc82", label: "100..1000" }),
+            createScaleItem("(10,100]", { color: "#00b599", label: "10..100" }),
+            createScaleItem("(1,10]", { color: "#008b98", label: "1..10" }),
+            createScaleItem("(.1,1]", { color: "#005f85", label: "0.1..1" }),
+            createScaleItem("(-1,.1]", { color: "#002f61", label: "0..0.1" }),
+        ]),
     },
     barometricPressure: {
         label: "Barometric Pressure",
