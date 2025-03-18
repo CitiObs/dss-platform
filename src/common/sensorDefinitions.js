@@ -62,6 +62,15 @@ export const SENSOR_DEFINITIONS = {
     noiseLevel: {
         label: "Noise Level",
         link: "https://qudt.org/vocab/quantitykind/SoundExposureLevel",
+        scale: new Scale([
+            createScaleItem("(120,)", { color: "#eb0000", label: "120.." }),
+            createScaleItem("(100,120]", { color: "#f86f15", label: "100..120" }),
+            createScaleItem("(80,100]", { color: "#ffd335", label: "80..100" }),
+            createScaleItem("(60,80]", { color: "#ffff3d", label: "60..80" }),
+            createScaleItem("(40,60]", { color: "#dcfb41", label: "40..60" }),
+            createScaleItem("(20,40]", { color: "#83f341", label: "20..40" }),
+            createScaleItem("(-10,20]", { color: "#00f03c", label: "..20" }),
+        ]),
     },
     pm1: {
         label: "PM 1",
