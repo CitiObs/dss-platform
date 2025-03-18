@@ -15,7 +15,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(0,5]", { color: "#a9d0ec", label: "0..5" }),
             createScaleItem("(-5,0]", { color: "#7daed4", label: "-5..0" }),
             createScaleItem("(-10,-5]", { color: "#4287bb", label: "-10..-5" }),
-            createScaleItem("(-100,-10]", { color: "#0c72b0", label: "-10.." }),
+            createScaleItem("(-100,-10]", { color: "#0c72b0", label: "..-10" }),
         ]),
     },
     relativeHumidity: {
