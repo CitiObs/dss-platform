@@ -50,6 +50,14 @@ export const SENSOR_DEFINITIONS = {
     barometricPressure: {
         label: "Barometric Pressure",
         link: "https://vocabs.lter-europe.net/EnvThes/22060",
+        scale: new Scale([
+            createScaleItem("(103,)", { color: "#ff0000", label: "103.." }),
+            createScaleItem("(102,103]", { color: "#ef0074", label: "102..103" }),
+            createScaleItem("(101,102]", { color: "#ce00c6", label: "101..102" }),
+            createScaleItem("(100,101]", { color: "#a216eb", label: "100..101" }),
+            createScaleItem("(99,100]", { color: "#6d41e6", label: "99..100" }),
+            createScaleItem("(0,99]", { color: "#005bbd", label: "..99" }),
+        ]),
     },
     noiseLevel: {
         label: "Noise Level",
