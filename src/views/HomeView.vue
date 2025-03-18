@@ -171,7 +171,6 @@ onBeforeRouteLeave(() => {
     const vectorSource = clusterRef.value.source.getSource();
     vectorSource.clear(true);
 });
-
 </script>
 
 <template>
@@ -179,12 +178,16 @@ onBeforeRouteLeave(() => {
         <template #drawer>
             <LayersDrawer class="pa-5">
                 <MapFilters v-model:sensor-metric="sensorMetric" />
-                <GiScale
-                    v-if="scale"
-                    :scale="scale"
-                    value="-9999"
-                    vertical
-                />
+                <v-card variant="tonal">
+                    <v-card-text>
+                        <GiScale
+                            v-if="scale"
+                            :scale="scale"
+                            value="-9999"
+                            vertical
+                        />
+                    </v-card-text>
+                </v-card>
             </LayersDrawer>
         </template>
 
