@@ -75,13 +75,40 @@ export const SENSOR_DEFINITIONS = {
     pm1: {
         label: "PM 1",
         link: "https://dd.eionet.europa.eu/vocabularyconcept/aq/pollutant/6002",
+        scale: new Scale([
+            createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
+            createScaleItem("(80,100]", { color: "#b7295d", label: "80..100" }),
+            createScaleItem("(60,80]", { color: "#ff9844", label: "60..80" }),
+            createScaleItem("(40,60]", { color: "#ffda55", label: "40..60" }),
+            createScaleItem("(20,40]", { color: "#dadd60", label: "20..40" }),
+            createScaleItem("(10,20]", { color: "#82dd65", label: "10..20" }),
+            createScaleItem("(-100,10]", { color: "#27dd67", label: "..10" }),
+        ]),
     },
     pm25: {
         label: "PM 2.5",
         link: "https://www.eea.europa.eu/help/glossary/eea-glossary/pm2.5",
+        scale: new Scale([
+            createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
+            createScaleItem("(80,100]", { color: "#b7295d", label: "80..100" }),
+            createScaleItem("(60,80]", { color: "#ff9844", label: "60..80" }),
+            createScaleItem("(40,60]", { color: "#ffda55", label: "40..60" }),
+            createScaleItem("(20,40]", { color: "#dadd60", label: "20..40" }),
+            createScaleItem("(10,20]", { color: "#82dd65", label: "10..20" }),
+            createScaleItem("(-100,10]", { color: "#27dd67", label: "..10" }),
+        ]),
     },
     pm10: {
         label: "PM 10",
         link: "https://www.eea.europa.eu/help/glossary/eea-glossary/pm10",
+        scale: new Scale([
+            createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
+            createScaleItem("(80,100]", { color: "#b7295d", label: "80..100" }),
+            createScaleItem("(60,80]", { color: "#ff9844", label: "60..80" }),
+            createScaleItem("(40,60]", { color: "#ffda55", label: "40..60" }),
+            createScaleItem("(20,40]", { color: "#dadd60", label: "20..40" }),
+            createScaleItem("(10,20]", { color: "#82dd65", label: "10..20" }),
+            createScaleItem("(-100,10]", { color: "#27dd67", label: "..10" }),
+        ]),
     },
 };
