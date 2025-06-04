@@ -20,4 +20,5 @@ export default {
 
     lang: "english",
     weatherSummary: "Weather Summary",
+    sensorMetric: "Sensor Metric",
 };

@@ -1,24 +1,16 @@
 <script setup>
+import { useI18n } from "vue-i18n";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 
 const sensorMetric = defineModel("sensorMetric", { type: String, required: true });
+
+const { t } = useI18n();
 
 // import { ref } from "vue";
 
 // const quality = ref(0);
 // const corrected = ref(0);
 
-// const quantityItems = [
-//     "Air Temperature",
-//     "PM10",
-//     "PM2.5",
-//     "Relative Humidity",
-//     "Barometric Pressure",
-//     "Nitrogen Dioxide",
-//     "Ammonia",
-//     "Noise Level",
-//     "Ambient Light"
-// ];
 // const qualityItems = ["A", "B", "C", "D"];
 // const correctedItems = ["0", "1", "2"];
 
@@ -27,14 +19,14 @@ const sensorMetric = defineModel("sensorMetric", { type: String, required: true 
 <template>
     <div class="pa-4">
         <p class="header-spacing">
-            Sensor Metrics
+            {{ t("sensorMetric") }}
         </p>
 
         <v-radio-group v-model="sensorMetric">
             <v-radio
                 v-for="(item, key) in SENSOR_DEFINITIONS"
                 :key="key"
-                :label="item.label"
+                :label="item.label()"
                 :value="key"
             />
         </v-radio-group>

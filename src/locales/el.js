@@ -20,4 +20,5 @@ export default {
 
     lang: "ελληνικά",
     weatherSummary: "Σύνοψη Καιρού",
+    sensorMetric: "Μετρική Αισθητήρων",
 };
