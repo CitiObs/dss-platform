@@ -7,8 +7,8 @@ import cloneDeep from "lodash-es/cloneDeep";
 
 const BASE_URLS = [
     // "https://api-samenmeten.rivm.nl/v1.0/",
-    "https://citiobs.demo.secure-dimensions.de/staplustest/v1.1",
-    // "https://nsdpstaplus.nilu.no/FROST-Server/v1.1",
+    // "https://citiobs.demo.secure-dimensions.de/staplustest/v1.1",
+    "https://nsdpstaplus.nilu.no/FROST-Server/v1.1",
     // "https://api-virtualair.nilu.no/v1.1/",
 ];
 

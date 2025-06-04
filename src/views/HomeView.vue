@@ -88,6 +88,20 @@ function thingsRawStyle(feature) {
         });
     }
 
+    const date = new Date(observations[0].phenomenonTime);
+    const now = new Date();
+    const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
+
+    if (date < fiveDaysAgo) {
+        return new Style({
+            image: new Circle({
+                fill: new Fill({ color: "#8a8888" }),
+                stroke: new Stroke({ color: "#8a8888", width: 1 }),
+                radius: 10,
+            }),
+        });
+    }
+
     let color = "#30c050"; // Default color if no scale is defined
 
     if (scale.value) {
