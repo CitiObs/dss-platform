@@ -1,6 +1,6 @@
-# geoint-vue Template
+# CitiObs DSS Platform
 
-This template should help get you started developing Geoint based frontend applications. Based on Vue 3 & Vite this project includes the geoint-vue library and a basic setup.
+This tools aims to help policy makers use citizen-generated data to make informed decisions regarding urban planning, air quality management and climate adaptation.
 
 ## Recommended IDE Setup
 
