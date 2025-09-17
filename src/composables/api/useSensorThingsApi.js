@@ -18,7 +18,7 @@ function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
-function thingsToGeoJSON (things, projection) {
+function thingsToGeoJSON(things, projection) {
     const plainFeatures = {
         type: "FeatureCollection",
         features: [],
@@ -39,7 +39,7 @@ function thingsToGeoJSON (things, projection) {
             observationsNavigationLink: thing.Datastreams[0]?.["Observations@iot.navigationLink"],
             name: thing.name,
             description: thing.description,
-            datastreams: thing.Datastreams
+            datastreams: thing.Datastreams,
         };
 
         const feature = {
@@ -56,7 +56,7 @@ function thingsToGeoJSON (things, projection) {
     return olFeatures;
 }
 
-async function fetchThingsFromAllApis (params, api) {
+async function fetchThingsFromAllApis(params, api) {
     const requests = BASE_URLS.map(async (url) => {
         const { response, error } = await withAsync(api.get, `${url}/Things`, {
             params,
@@ -85,6 +85,8 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         let totalItems = 0;
         let areMoreItemsToFetch = false;
 
+        sensorStore.cleanUp();
+
         const polygon = cell.toWKT();
         const params = {
             $expand: `Datastreams($select=@iot.selfLink;$filter=ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}';$expand=ObservedProperty($select=definition),Observations($top=1;$orderby=phenomenonTime desc;$select=phenomenonTime,result),Thing($select=@iot.id),Sensor($select=@iot.id)), Locations($select=location)`,
@@ -97,7 +99,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         const storedSensorData = sensorStore.getSensorData(paramsKey);
 
         if (storedSensorData) {
-            storedSensorData.things.all().forEach(feature => {
+            storedSensorData.things.all().forEach((feature) => {
                 collection.push(feature);
             });
 
@@ -106,7 +108,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
 
         const thingsFromAllApis = await fetchThingsFromAllApis(params, api);
 
-        thingsFromAllApis.forEach(responseData => {
+        thingsFromAllApis.forEach((responseData) => {
             if (!responseData) return;
 
             if (responseData["@iot.count"] > MAX_ITEMS) {

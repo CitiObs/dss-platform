@@ -1,6 +1,5 @@
 import { defineStore } from "pinia";
-import { FeatureCollection } from "@geoint/geoint-vue";
-import { useGiScheduler } from "@geoint/geoint-vue";
+import { FeatureCollection, useGiScheduler, log } from "@geoint/geoint-vue";
 
 import GeoJSON from "ol/format/GeoJSON";
 import LZString from "lz-string";
@@ -45,11 +44,13 @@ export const useSensorStore = defineStore("sensor", () => {
         }
     }
 
-    function clearSensorData(sensorStorageKey) {
+    function removeSensorData(sensorStorageKey) {
         localStorage.removeItem(sensorStorageKey);
     }
 
     function cleanUp() {
+        let removedCount = 0;
+
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
 
@@ -64,15 +65,20 @@ export const useSensorStore = defineStore("sensor", () => {
                 const now = new Date();
                 const lifetime = now - dateCreated;
                 if (lifetime > EXPIRATION) {
+                    removedCount++;
                     localStorage.removeItem(key);
                 }
             } catch {
                 continue;
             }
         }
+
+        if (removedCount > 0) {
+            log.trace(`Removed ${removedCount} expired entries from cache.`);
+        }
     }
 
     scheduler.schedule(cleanUp, { seconds: 30 });
 
-    return { setSensorData, getSensorData, clearSensorData };
+    return { setSensorData, getSensorData, removeSensorData, cleanUp };
 });
