@@ -19,17 +19,16 @@ const authStore = useAuthStore();
 
         <v-spacer />
 
-        <MainNav />
+        <!-- <MainNav /> -->
 
-        <v-divider
+        <!-- <v-divider
             vertical
             inset
             class="mx-3 h-50 my-auto"
-        />
+        /> -->
 
         <div class="d-flex align-center justify-space-around ga-2">
-            <ButtonChangeTheme />
-
+            <!-- <ButtonChangeTheme /> -->
             <MenuChangeLocale />
         </div>
 
