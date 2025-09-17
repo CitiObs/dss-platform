@@ -3,6 +3,12 @@ import { Scale, createScaleItem } from "@geoint/geoint-vue";
 
 const t = i18n.global.t;
 
+const commonCases = [
+    createScaleItem("[-99999,-999999]", { color: "#00000000", label: "" }),
+    createScaleItem("[-99999,-999999]", { color: "#8a8888", label: t("sensor.oldData") }),
+    createScaleItem("[-99999,-999999]", { color: "#000000", label: t("sensor.noData") }),
+];
+
 export const SENSOR_DEFINITIONS = {
     airTemperature: {
         label: () => t("gi.metrics.temperature"),
@@ -19,6 +25,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(-5,0]", { color: "#7daed4", label: "-5..0" }),
             createScaleItem("(-10,-5]", { color: "#4287bb", label: "-10..-5" }),
             createScaleItem("(-100,-10]", { color: "#0c72b0", label: "..-10" }),
+            ...commonCases,
         ]),
     },
     relativeHumidity: {
@@ -35,6 +42,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(20,30]", { color: "#d6954a", label: "20..30" }),
             createScaleItem("(10,20]", { color: "#b26823", label: "10..20" }),
             createScaleItem("(-100,10)", { color: "#9e4f05", label: "0..10" }),
+            ...commonCases,
         ]),
     },
     atmosphericPressure: {
@@ -47,6 +55,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(100,101]", { color: "#a216eb", label: "100..101" }),
             createScaleItem("(99,100]", { color: "#6d41e6", label: "99..100" }),
             createScaleItem("(0,99]", { color: "#005bbd", label: "..99" }),
+            ...commonCases,
         ]),
     },
     pm25: {
@@ -60,6 +69,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(20,40]", { color: "#dadd60", label: "20..40" }),
             createScaleItem("(10,20]", { color: "#82dd65", label: "10..20" }),
             createScaleItem("(-100,10]", { color: "#27dd67", label: "..10" }),
+            ...commonCases,
         ]),
     },
     pm10: {
@@ -73,6 +83,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(20,40]", { color: "#dadd60", label: "20..40" }),
             createScaleItem("(10,20]", { color: "#82dd65", label: "10..20" }),
             createScaleItem("(-100,10]", { color: "#27dd67", label: "..10" }),
+            ...commonCases,
         ]),
     },
     no2: {
@@ -85,6 +96,7 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(80,120]", { color: "#ff7e00", label: "80..120" }),
             createScaleItem("(40,80]", { color: "#ffff00", label: "40..80" }),
             createScaleItem("(0,40]", { color: "#00e400", label: "..40" }),
+            ...commonCases,
         ]),
     },
     // ambientLight: {
@@ -98,6 +110,7 @@ export const SENSOR_DEFINITIONS = {
     //         createScaleItem("(1,10]", { color: "#008b98", label: "1..10" }),
     //         createScaleItem("(.1,1]", { color: "#005f85", label: "0.1..1" }),
     //         createScaleItem("(-1,.1]", { color: "#002f61", label: "0..0.1" }),
+    //         ...commonCases,
     //     ]),
     // },
     // noiseLevel: {
@@ -111,6 +124,7 @@ export const SENSOR_DEFINITIONS = {
     //         createScaleItem("(40,60]", { color: "#dcfb41", label: "40..60" }),
     //         createScaleItem("(20,40]", { color: "#83f341", label: "20..40" }),
     //         createScaleItem("(-10,20]", { color: "#00f03c", label: "..20" }),
+    //         ...commonCases,
     //     ]),
     // },
     // pm1: {
@@ -124,6 +138,7 @@ export const SENSOR_DEFINITIONS = {
     //         createScaleItem("(20,40]", { color: "#dadd60", label: "20..40" }),
     //         createScaleItem("(10,20]", { color: "#82dd65", label: "10..20" }),
     //         createScaleItem("(-100,10]", { color: "#27dd67", label: "..10" }),
+    //         ...commonCases,
     //     ]),
     // },
 };

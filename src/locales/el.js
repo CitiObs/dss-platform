@@ -11,11 +11,13 @@ export default {
         lastMeasurement: "Τελευταία Μέτρηση",
         dataOrigin: "Προέλευση Δεδομένων",
         license: "Άδεια",
+        oldData: "Παλαιά δεδομένα",
+        noData: "Χωρίς δεδομένα",
     },
 
     home: {
         welcomeToCitiobs: "Καλωσήρθατε στο CitiObs!",
-        loadingMapData: "Φόρτωση δεδομένων χάρτη, παρακαλώ περιμένετε..."
+        loadingMapData: "Φόρτωση δεδομένων χάρτη, παρακαλώ περιμένετε...",
     },
 
     lang: "ελληνικά",

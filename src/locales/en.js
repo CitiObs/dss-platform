@@ -11,11 +11,13 @@ export default {
         lastMeasurement: "Last Measurement",
         dataOrigin: "Data Origin",
         license: "License",
+        oldData: "Old data",
+        noData: "No data",
     },
 
     home: {
         welcomeToCitiobs: "Welcome to CitiObs!",
-        loadingMapData: "Loading map data, please wait..."
+        loadingMapData: "Loading map data, please wait...",
     },
 
     lang: "english",

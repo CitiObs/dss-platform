@@ -81,8 +81,8 @@ function thingsRawStyle(feature) {
     if (!observations?.length) {
         return new Style({
             image: new Circle({
-                fill: new Fill({ color: "#555" }),
-                stroke: new Stroke({ color: "#555", width: 1 }),
+                fill: new Fill({ color: "#00000000" }),
+                stroke: new Stroke({ color: "#555", width: 2 }),
                 radius: 10,
             }),
         });
