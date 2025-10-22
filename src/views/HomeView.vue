@@ -26,6 +26,7 @@ const apiCode = ref();
 const datastreamLink = ref();
 const thingLink = ref();
 const isSensorOverviewDialog = ref(false);
+const isLoading = ref(false);
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
@@ -76,9 +77,9 @@ const scale = computed(() => {
 });
 
 function thingsRawStyle(feature) {
-    const observations = feature.get("datastreams")?.[0]?.Observations;
+    const observations = feature.get("Observations");
 
-    if (!observations?.length) {
+    if (!observations) {
         return new Style({
             image: new Circle({
                 fill: new Fill({ color: "#00000000" }),
@@ -88,7 +89,7 @@ function thingsRawStyle(feature) {
         });
     }
 
-    const date = new Date(observations[0].phenomenonTime);
+    const date = new Date(observations.phenomenonTime);
     const now = new Date();
     const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
 
@@ -105,7 +106,7 @@ function thingsRawStyle(feature) {
     let color = "#30c050"; // Default color if no scale is defined
 
     if (scale.value) {
-        const matchingItem = scale.value.getAttributes(observations[0].result);
+        const matchingItem = scale.value.getAttributes(observations.result);
         if (matchingItem) {
             color = matchingItem.color;
         }
@@ -161,6 +162,7 @@ function setMapGrid () {
 }
 
 async function fetchAllThings () {
+    isLoading.value = true;
     allThingsByCollection.value = [];
 
     for (const cell of mapGrid.value) {
@@ -170,6 +172,25 @@ async function fetchAllThings () {
 
         allThingsByCollection.value.push(features);
     }
+
+    // For simple (non-grouped) Things, retrieve the corresponding Datastream ID 
+    // based on the selected metric. Then, fetch their latest observations so that 
+    // their map markers can be updated with the appropriate color.
+    allThingsByCollection.value.forEach(collection => {
+        if (collection.size() && collection.first("type") !== "count") {
+            collection.all().forEach(async (feature) => {
+                const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
+                const datastream = feature.get("datastreams").find(
+                    datastream => datastream.ObservedProperty.definition === metric
+                );
+                const datastreamId = datastream["@iot.id"];
+                const data = await sensorThingsApi.getSimpleThingData(datastreamId);
+                feature.set("Observations", data);
+            });
+        }
+    });
+
+    isLoading.value = false;
 }
 
 async function onMapViewChanged() {
@@ -189,6 +210,14 @@ onBeforeRouteLeave(() => {
 
 <template>
     <LayoutMap>
+        <div style="height: 4px;">
+            <v-progress-linear
+                v-if="isLoading"
+                color="secondary"
+                indeterminate
+            />
+        </div>
+
         <template #drawer>
             <LayersDrawer class="pa-5">
                 <MapFilters v-model:sensor-metric="sensorMetric" />

@@ -89,10 +89,13 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
 
         const polygon = cell.toWKT();
         const params = {
-            $expand: `Datastreams($select=@iot.selfLink;$filter=ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}';$expand=ObservedProperty($select=definition),Observations($top=1;$orderby=phenomenonTime desc;$select=phenomenonTime,result),Thing($select=@iot.id),Sensor($select=@iot.id)), Locations($select=location)`,
-            $filter: `st_within(Locations/location, geography'${polygon}')`,
-            $count: true,
-            $top: MAX_ITEMS,
+            // $expand: `Datastreams($select=@iot.selfLink;$filter=ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}';$expand=ObservedProperty($select=definition),Observations($top=1;$orderby=phenomenonTime desc;$select=phenomenonTime,result),Thing($select=@iot.id),Sensor($select=@iot.id)), Locations($select=location)`,
+            // $filter: `st_within(Locations/location, geography'${polygon}')`,
+            // $count: true,
+            // $top: MAX_ITEMS,
+
+            // New params
+            $expand: `Datastreams/ObservedProperty($select=definition),Locations($select=location)&$filter=st_within(Locations/location, geography'${polygon}') and Datastreams/ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}'&$count=true&$top=0`,
         };
 
         const paramsKey = JSON.stringify(params);
@@ -138,7 +141,24 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         return collection;
     };
 
+    const getSimpleThingData = async (id) => {
+        const url = "https://api-virtualair.nilu.no/v1.1/";
+
+        const { response, error } = await withAsync(
+            api.get,
+            `${url}/Datastreams(${id})?$expand=Observations($orderby=phenomenonTime%20desc;$top=1)&$select=Observations/result`
+        );
+
+        if (error) {
+            console.error(error);
+            return;
+        }
+
+        return response.data.Observations[0];
+    };
+
     return {
         getThings,
+        getSimpleThingData,
     };
 }
