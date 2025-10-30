@@ -97,7 +97,7 @@ function thingsRawStyle(feature) {
         return new Style({
             image: new Circle({
                 fill: new Fill({ color: "#8a8888" }),
-                stroke: new Stroke({ color: "#8a8888", width: 1 }),
+                stroke: new Stroke({ ccolor: "#555", width: 2 }),
                 radius: 10,
             }),
         });
@@ -115,7 +115,7 @@ function thingsRawStyle(feature) {
     return new Style({
         image: new Circle({
             fill: new Fill({ color }),
-            stroke: new Stroke({ color, width: 1 }),
+            stroke: new Stroke({ color: "#555", width: 2 }),
             radius: 10,
         }),
     });
