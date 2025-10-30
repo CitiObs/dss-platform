@@ -1,13 +1,10 @@
 <script setup>
-import { useAuthStore } from "@/stores/authStore.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 import MainNav from "./MainNav.vue";
 import ProjectLogo from "@/components/ProjectLogo.vue";
-import MenuUserAccount from "@/components/MenuUserAccount.vue";
 import MenuChangeLocale from "@/components/MenuChangeLocale.vue";
 import ButtonChangeTheme from "@/components/ButtonChangeTheme.vue";
 
-const authStore = useAuthStore();
 </script>
 
 <template>
@@ -31,15 +28,5 @@ const authStore = useAuthStore();
             <!-- <ButtonChangeTheme /> -->
             <MenuChangeLocale />
         </div>
-
-        <v-divider
-            vertical
-            inset
-            class="mx-3 h-50 my-auto"
-        />
-
-        <MenuUserAccount
-            v-if="authStore.userIsAuth"
-        />
     </v-app-bar>
 </template>

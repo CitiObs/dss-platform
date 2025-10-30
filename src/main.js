@@ -20,7 +20,6 @@ import dayjs from "@/plugins/dayjs";
 // Geoint
 import geoint from "@/plugins/geoint/geoint";
 import i18n from "@/plugins/geoint/i18n";
-import keycloakVue from "@/plugins/geoint/keycloak";
 
 createApp(App)
     .use(createPinia())
@@ -30,11 +29,4 @@ createApp(App)
     .use(geoint)
     .use(OpenLayersMap)
     .use(VueApexCharts)
-    .use(keycloakVue, {
-        ...CONFIG.keycloak_options,
-        onTokenRefresh: (keycloak) => {
-            geoint.apiClient("geoint-api").defaults.headers["Authorization"] = `Bearer ${keycloak.token}`;
-            geoint.apiClient("wfs").defaults.headers["Authorization"] = `Bearer ${keycloak.token}`;
-        },
-    })
     .mount("#app");
