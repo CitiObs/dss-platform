@@ -30,6 +30,8 @@ const isLoading = ref(false);
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
+let pendingRequests = 0;
+
 const mapSize = computed(() => {
     return {
         width: "100%",
@@ -162,35 +164,41 @@ function setMapGrid () {
 }
 
 async function fetchAllThings () {
+    pendingRequests++;
     isLoading.value = true;
     allThingsByCollection.value = [];
 
-    for (const cell of mapGrid.value) {
-        const features = await sensorThingsApi.getThings(sensorMetric.value, cell);
+    try {
+        for (const cell of mapGrid.value) {
+            const features = await sensorThingsApi.getThings(sensorMetric.value, cell);
 
-        if (!features) continue;
+            if (!features) continue;
 
-        allThingsByCollection.value.push(features);
-    }
-
-    // For simple (non-grouped) Things, retrieve the corresponding Datastream ID 
-    // based on the selected metric. Then, fetch their latest observations so that 
-    // their map markers can be updated with the appropriate color.
-    allThingsByCollection.value.forEach(collection => {
-        if (collection.size() && collection.first("type") !== "count") {
-            collection.all().forEach(async (feature) => {
-                const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
-                const datastream = feature.get("datastreams").find(
-                    datastream => datastream.ObservedProperty.definition === metric
-                );
-                const datastreamId = datastream["@iot.id"];
-                const data = await sensorThingsApi.getSimpleThingData(datastreamId);
-                feature.set("Observations", data);
-            });
+            allThingsByCollection.value.push(features);
         }
-    });
 
-    isLoading.value = false;
+        // For simple (non-grouped) Things, retrieve the corresponding Datastream ID 
+        // based on the selected metric. Then, fetch their latest observations so that 
+        // their map markers can be updated with the appropriate color.
+        allThingsByCollection.value.forEach(collection => {
+            if (collection.size() && collection.first("type") !== "count") {
+                collection.all().forEach(async (feature) => {
+                    const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
+                    const datastream = feature.get("datastreams").find(
+                        datastream => datastream.ObservedProperty.definition === metric
+                    );
+                    const datastreamId = datastream["@iot.id"];
+                    const data = await sensorThingsApi.getSimpleThingData(datastreamId);
+                    feature.set("Observations", data);
+                });
+            }
+        });
+    } finally {
+        pendingRequests--;
+        if (pendingRequests === 0){
+            isLoading.value = false;
+        }
+    }
 }
 
 async function onMapViewChanged() {
@@ -206,6 +214,7 @@ onBeforeRouteLeave(() => {
     const vectorSource = clusterRef.value.source.getSource();
     vectorSource.clear(true);
 });
+
 </script>
 
 <template>
