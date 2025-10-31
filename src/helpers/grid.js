@@ -189,6 +189,7 @@ class Grid {
 }
 
 export function generateGrid(extent, zoom) {
+    zoom = zoom * 0.9; // make grid a bit coarser
     const tilesExtent = extentToTiles(extent, zoom);
     const grid = new Grid();
     for (let y = tilesExtent.north; y <= tilesExtent.south; y++) {
