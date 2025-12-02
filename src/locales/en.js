@@ -18,6 +18,7 @@ export default {
     home: {
         welcomeToCitiobs: "Welcome to CitiObs!",
         loadingMapData: "Loading map data, please wait...",
+        logoDSSText: "DSS",
     },
 
     footer: {
