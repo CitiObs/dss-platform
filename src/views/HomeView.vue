@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
-import { FeatureCollection } from "@geoint/geoint-vue";
+import { FeatureCollection, GiBtn } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
@@ -274,6 +274,18 @@ async function onMapViewChanged() {
     await fetchAllThings();
 }
 
+function zoomIn() {
+    const view = mapRef.value.map.getView();
+    const zoom = view.getZoom();
+    view.animate({ zoom: zoom + 1, duration: 250 });
+}
+
+function zoomOut() {
+    const view = mapRef.value.map.getView();
+    const zoom = view.getZoom();
+    view.animate({ zoom: zoom - 1, duration: 250 });
+}
+
 watch(sensorMetric, async () => {
     await fetchAllThings();
 });
@@ -312,7 +324,7 @@ onBeforeRouteLeave(() => {
         </template>
 
         <div
-            class="text-center text-h1"
+            class="map-container text-center text-h1"
             style="position: relative;"
         >
             <ol-map
@@ -376,6 +388,20 @@ onBeforeRouteLeave(() => {
                 </ol-vector-layer>
             </ol-map>
 
+            <!-- Custom Zoom Controls -->
+            <div class="custom-zoom-controls d-flex flex-column ga-1 ">
+                <GiBtn
+                    icon="mdi-plus"
+                    class="gi-primary"
+                    @click="zoomIn"
+                />
+                <GiBtn
+                    icon="mdi-minus"
+                    class="gi-primary"
+                    @click="zoomOut"
+                />
+            </div>
+
             <!-- Tooltip for all sensors -->
             <v-tooltip
                 v-model="showTooltip"
@@ -411,6 +437,17 @@ onBeforeRouteLeave(() => {
 </template>
 
 <style scoped>
+.map-container {
+  position: relative;
+}
+
+.custom-zoom-controls {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    z-index: 1000;
+}
+
 .sensor-tooltip {
   position: absolute;
   pointer-events: none;
