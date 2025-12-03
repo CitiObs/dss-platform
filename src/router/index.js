@@ -11,7 +11,11 @@ const router = createRouter({
 });
 
 router.afterEach((to) => {
-    setTitle(to.meta.title);
+    // Resolve the page title: call the function if meta.title is dynamic,
+    // otherwise use the static value
+    const title = typeof to.meta.title === "function" ? to.meta.title() : to.meta.title;
+
+    setTitle(title);
 });
 
 export default router;

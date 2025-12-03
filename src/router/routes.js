@@ -9,7 +9,7 @@ export default [
         name: "home",
         component: HomeView,
         meta: {
-            title: t("routes.home"),
+            title: () => t("routes.home"),
         },
     },
 ];
