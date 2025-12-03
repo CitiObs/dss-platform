@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
-import { FeatureCollection, GiBtn, GiScale } from "@geoint/geoint-vue";
+import { FeatureCollection, GiBtn, Scale, createScaleItem, GiScale } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
@@ -76,10 +76,31 @@ const thingsRaw = computed(() => {
 });
 
 const scale = computed(() => {
-    if (SENSOR_DEFINITIONS[sensorMetric.value].scale) {
-        return SENSOR_DEFINITIONS[sensorMetric.value].scale;
-    }
-    return null;
+    const sensorDef = SENSOR_DEFINITIONS[sensorMetric.value];
+    if (!sensorDef.scale) return null;
+
+    // Recreate the scale to pick up new translations
+    const scaleItems = sensorDef.scale._items.map(item => {
+        // Update common case labels dynamically for translation
+        if (item._definition === "[-99999,-999999]") {
+            let label = item._attributes.label;
+            if (item._attributes.color === "#8a8888") {
+                label = t("sensor.oldData");
+            } else if (item._attributes.color === "#000000") {
+                label = t("sensor.noData");
+            } else if (item._attributes.color === "#00000000") {
+                label = ""; // Empty label remains empty
+            }
+            return createScaleItem(item._definition, {
+                color: item._attributes.color,
+                label: label
+            });
+        }
+        // Return other items as-is
+        return item;
+    });
+
+    return new Scale(scaleItems);
 });
 
 function hasObservationData(feature) {
