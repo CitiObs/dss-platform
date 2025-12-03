@@ -26,7 +26,7 @@ const euFundedImgHeight = `${STYLES_CONFIG.footer_height / 2}px`;
                 />
 
                 <p class="footer__eu-funded-desc gi-text-sm">
-                    This project has received funding from the European Union’s Horizon Europe programme for research and innovation under grant agreement No. 101121135.
+                    {{ $t('footer.projectFundingNotice') }}
                 </p>
             </div>
         </v-footer>

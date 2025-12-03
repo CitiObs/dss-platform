@@ -20,6 +20,11 @@ export default {
         loadingMapData: "Loading map data, please wait...",
     },
 
+    footer: {
+        projectFundingNotice:
+            "This project has received funding from the European Union’s Horizon Europe programme for research and innovation under grant agreement No. 101086421.",
+    },
+
     lang: "english",
     weatherSummary: "Weather Summary",
     sensorMetric: "Sensor Metric",
