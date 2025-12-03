@@ -13,6 +13,7 @@ export default {
         license: "Άδεια",
         oldData: "Παλαιά δεδομένα",
         noData: "Χωρίς δεδομένα",
+        unknown: "Άγνωστο",
     },
 
     home: {

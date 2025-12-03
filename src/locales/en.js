@@ -13,6 +13,7 @@ export default {
         license: "License",
         oldData: "Old data",
         noData: "No data",
+        unknown: "Unknown",
     },
 
     home: {

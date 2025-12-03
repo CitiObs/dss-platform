@@ -8,6 +8,7 @@ import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 import { generateGrid, Extent } from "../helpers/grid";
 import { transformExtent } from "ol/proj";
 import { Circle, Fill, Stroke, Style } from "ol/style.js";
+import { useI18n } from "vue-i18n";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import MapFilters from "@/components/MapFilters.vue";
@@ -16,6 +17,7 @@ import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 import GiScale from "@geoint/geoint-vue/src/components/geoint/scale/GiScale.vue";
 
 const sensorThingsApi = useSensorThingsApi();
+const { t } = useI18n();
 
 const mapGrid = ref();
 const allThingsByCollection = ref([]);
@@ -27,6 +29,9 @@ const datastreamLink = ref();
 const thingLink = ref();
 const isSensorOverviewDialog = ref(false);
 const isLoading = ref(false);
+const showTooltip = ref(false);
+const tooltipPosition = ref({ x: 0, y: 0 });
+const tooltipContent = ref("");
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
@@ -78,6 +83,11 @@ const scale = computed(() => {
     return null;
 });
 
+function hasObservationData(feature) {
+    const observations = feature.get("Observations");
+    return observations !== null && observations !== undefined;
+}
+
 function thingsRawStyle(feature) {
     const observations = feature.get("Observations");
 
@@ -99,7 +109,7 @@ function thingsRawStyle(feature) {
         return new Style({
             image: new Circle({
                 fill: new Fill({ color: "#8a8888" }),
-                stroke: new Stroke({ ccolor: "#555", width: 2 }),
+                stroke: new Stroke({ color: "#555", width: 2 }),
                 radius: 10,
             }),
         });
@@ -136,14 +146,72 @@ function getFeatureProperties (event) {
 }
 
 function handleMapClick (event) {
-    const clickedThings = getFeatureProperties(event);
+    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
 
-    if (!clickedThings.length) return;
+    if (!featuresAtPixel.length) return;
+
+    const feature = featuresAtPixel[0];
+    const hasData = hasObservationData(feature);
+
+    // Only open dialog if the sensor has data
+    if (!hasData) return;
+
+    const clickedThings = getFeatureProperties(event);
 
     apiCode.value = "SWNP";
     datastreamLink.value = clickedThings[0].datastreamSelfLink;
     thingLink.value = clickedThings[0].selfLink;
     isSensorOverviewDialog.value = true;
+}
+
+/**
+ * Handles pointer movement on the map and updates the hover behavior for individual sensors.
+ *
+ * - Detects whether the pointer is currently over an individual (non-aggregated) sensor feature.
+ * - Shows a tooltip displaying the sensor ID (and "No data" when applicable).
+ * - Changes the cursor to a pointer only for sensors with observation data.
+ * - Resets tooltip and cursor state when no features are hovered.
+ *
+ * @param {Object} event - The OpenLayers pointer event containing pixel coordinates.
+ */
+function handleMapPointerMove(event) {
+    // Get all layers from the map
+    const layers = mapRef.value.map.getLayers().getArray();
+
+    // Find the vector layer used for individual (non-aggregated) sensors
+    const individualSensorsLayer = layers[3];
+
+    // Restrict hit detection to that layer only
+    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel, {
+        layerFilter: (layer) => layer === individualSensorsLayer
+    });
+
+    if (featuresAtPixel.length > 0) {
+        const feature = featuresAtPixel[0];
+        const hasData = hasObservationData(feature);
+        const sensorId = feature.get("id") || t("sensor.unknown");
+
+        showTooltip.value = true;
+        tooltipPosition.value = {
+            x: event.pixel[0],
+            y: event.pixel[1]
+        };
+
+        if (hasData) {
+            // Has data - show pointer cursor and sensorId
+            mapRef.value.map.getTargetElement().style.cursor = "pointer";
+            tooltipContent.value = sensorId;
+        } else {
+            // No data - show default cursor and sensorId: No data
+            mapRef.value.map.getTargetElement().style.cursor = "default";
+            tooltipContent.value = `${sensorId}: ${t("sensor.noData")}`;
+        }
+    } else {
+        // No features - reset everything
+        mapRef.value.map.getTargetElement().style.cursor = "";
+        showTooltip.value = false;
+        tooltipContent.value = "";
+    }
 }
 
 function setMapGrid () {
@@ -177,8 +245,8 @@ async function fetchAllThings () {
             allThingsByCollection.value.push(features);
         }
 
-        // For simple (non-grouped) Things, retrieve the corresponding Datastream ID 
-        // based on the selected metric. Then, fetch their latest observations so that 
+        // For simple (non-grouped) Things, retrieve the corresponding Datastream ID
+        // based on the selected metric. Then, fetch their latest observations so that
         // their map markers can be updated with the appropriate color.
         allThingsByCollection.value.forEach(collection => {
             if (collection.size() && collection.first("type") !== "count") {
@@ -243,13 +311,17 @@ onBeforeRouteLeave(() => {
             </LayersDrawer>
         </template>
 
-        <div class="text-center text-h1">
+        <div
+            class="text-center text-h1"
+            style="position: relative;"
+        >
             <ol-map
                 ref="mapRef"
                 :controls="[]"
                 :style="mapSize"
                 @click="handleMapClick"
                 @moveend="onMapViewChanged"
+                @pointermove="handleMapPointerMove"
             >
                 <ol-view
                     :center="[0, 5000000]"
@@ -303,6 +375,29 @@ onBeforeRouteLeave(() => {
                     </ol-style>
                 </ol-vector-layer>
             </ol-map>
+
+            <!-- Tooltip for all sensors -->
+            <v-tooltip
+                v-model="showTooltip"
+                class="sensor-tooltip"
+                :style="{
+                    left: tooltipPosition.x + 'px',
+                    top: tooltipPosition.y + 'px'
+                }"
+                location="top"
+            >
+                <template #activator="{ props }">
+                    <div
+                        v-bind="props"
+                        class="tooltip-activator"
+                        :style="{
+                            left: tooltipPosition.x + 'px',
+                            top: tooltipPosition.y + 'px'
+                        }"
+                    ></div>
+                </template>
+                <span>{{ tooltipContent }}</span>
+            </v-tooltip>
         </div>
 
         <SensorOverviewDialog
@@ -314,3 +409,17 @@ onBeforeRouteLeave(() => {
         />
     </LayoutMap>
 </template>
+
+<style scoped>
+.sensor-tooltip {
+  position: absolute;
+  pointer-events: none;
+}
+
+.tooltip-activator {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+</style>
