@@ -36,6 +36,7 @@ function toggleLayersDrawer() {
     transform: translateY(-50%);
     right: calc(($size * -1) - 1px);
     z-index: 1200;
+    border-radius: 0 5px 5px 0 !important;
 
     .v-btn--icon .v-icon {
         --v-icon-size-multiplier: 1.2;
