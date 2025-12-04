@@ -44,7 +44,7 @@ const langs = [
                     :key="lang.value"
                     link
                     variant="text"
-                    :class="{'text-primary': lang.value === localeStore.locale}"
+                    :class="{'gi-text-primary gi-bg-primary-500': lang.value === localeStore.locale}"
                     :active="lang.value === localeStore.locale"
                     @click="localeStore.setLocale(lang.value)"
                 >
