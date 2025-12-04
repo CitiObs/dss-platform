@@ -388,17 +388,17 @@ onBeforeRouteLeave(() => {
                 <ol-vector-layer>
                     <ol-source-vector :features="thingsAggregated.all()" />
                     <ol-style :override-style-function="thingsAggregatedStyle">
-                        <ol-style-circle radius="20">
-                            <ol-style-fill color="#70d4d0" />
+                        <ol-style-circle radius="25">
+                            <ol-style-fill color="#005e5b" />
                             <ol-style-stroke
-                                color="#70d4d0"
-                                width="1"
+                                color="#00b6df"
+                                width="3"
                             />
                         </ol-style-circle>
                         <ol-style-text
                             text="10"
                             font="16px sans-serif"
-                            fill="#000"
+                            fill="#e6f3f2"
                         />
                     </ol-style>
                 </ol-vector-layer>
