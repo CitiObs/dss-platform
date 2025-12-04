@@ -42,6 +42,11 @@ const mapSize = computed(() => {
         height: `calc(100vh - ${occupiedHeight}px)`,
     };
 });
+// Compute the drawer height so that all content is displayed correctly.
+// The "25px" offset harmonizes the drawer height with the footer's height.
+const drawerHeight = computed(() => {
+    return `calc(100vh - ${occupiedHeight - 25}px)`;
+});
 
 const gridFeatures = computed(() => {
     if (!mapGrid.value) return new FeatureCollection();
@@ -334,7 +339,10 @@ onBeforeRouteLeave(() => {
         </div>
 
         <template #drawer>
-            <LayersDrawer class="pa-5">
+            <LayersDrawer
+                class="pa-5"
+                :style="{ height: drawerHeight }"
+            >
                 <MapFilters v-model:sensor-metric="sensorMetric" />
                 <v-card variant="tonal">
                     <v-card-text>
