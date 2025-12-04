@@ -10,7 +10,7 @@ function toggleLayersDrawer() {
     <v-navigation-drawer
         v-model="modelValue"
         absolute
-        width="400"
+        width="350"
     >
         <!-- Drawer Content -->
         <slot></slot>

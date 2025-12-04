@@ -103,6 +103,12 @@ const scale = computed(() => {
     return new Scale(scaleItems);
 });
 
+const currentSensorLabelWithUnit = computed(() => {
+    const label = SENSOR_DEFINITIONS[sensorMetric.value]?.label() || sensorMetric.value;
+    const unit = SENSOR_DEFINITIONS[sensorMetric.value]?.unit || "";
+    return `${label} ${unit ? `(${unit})` : ""}`;
+});
+
 function hasObservationData(feature) {
     const observations = feature.get("Observations");
     return observations !== null && observations !== undefined;
@@ -332,6 +338,9 @@ onBeforeRouteLeave(() => {
                 <MapFilters v-model:sensor-metric="sensorMetric" />
                 <v-card variant="tonal">
                     <v-card-text>
+                        <h2 class="mb-5 gi-text-h6 gi-font-weight-regular">
+                            {{ currentSensorLabelWithUnit }}
+                        </h2>
                         <GiScale
                             v-if="scale"
                             :scale="scale"
@@ -478,5 +487,16 @@ onBeforeRouteLeave(() => {
   width: 1px;
   height: 1px;
   pointer-events: none;
+}
+::v-deep(.gi-scale-item__color) {
+  width: 24px;
+}
+
+::v-deep(.gi-scale-item__label) {
+  margin-left: 24px;
+}
+
+:deep(.gi-scale-item__marker) {
+    display: none !important;
 }
 </style>
