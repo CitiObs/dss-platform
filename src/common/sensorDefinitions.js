@@ -9,9 +9,20 @@ const commonCases = [
     createScaleItem("[-99999,-999999]", { color: "#000000", label: t("sensor.noData") }),
 ];
 
+export const SENSOR_ICONS = {
+    airTemperature: "mdi-thermometer",
+    relativeHumidity: "mdi-water-percent",
+    atmosphericPressure: "mdi-gauge",
+    pm25: "mdi-grain",
+    pm10: "mdi-grain",
+    no2: "mdi-grain",
+};
+
 export const SENSOR_DEFINITIONS = {
     airTemperature: {
         label: () => t("gi.metrics.temperature"),
+        unit: "°C",
+        icon: SENSOR_ICONS.airTemperature,
         link: "http://vocabs.lter-europe.net/EnvThes/22035",
         scale: new Scale([
             createScaleItem("(35,)", { color: "#d71d1d", label: "35.." }),
@@ -30,6 +41,8 @@ export const SENSOR_DEFINITIONS = {
     },
     relativeHumidity: {
         label: () => t("gi.metrics.relative_humidity"),
+        unit: "%RH",
+        icon: SENSOR_ICONS.relativeHumidity,
         link: "http://vocabs.lter-europe.net/EnvThes/21579",
         scale: new Scale([
             createScaleItem("(90,)", { color: "#006ec2", label: "90..100" }),
@@ -47,6 +60,8 @@ export const SENSOR_DEFINITIONS = {
     },
     atmosphericPressure: {
         label: () => t("gi.metrics.pressure"),
+        unit: "kPa",
+        icon: SENSOR_ICONS.atmosphericPressure,
         link: "https://qudt.org/vocab/quantitykind/Pressure",
         scale: new Scale([
             createScaleItem("(103,)", { color: "#ff0000", label: "103.." }),
@@ -60,6 +75,8 @@ export const SENSOR_DEFINITIONS = {
     },
     pm25: {
         label: () => t("gi.metrics['pm2.5']"),
+        unit: "µg/m³",
+        icon: SENSOR_ICONS.pm25,
         link: "https://www.eea.europa.eu/help/glossary/eea-glossary/pm2.5",
         scale: new Scale([
             createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
@@ -74,6 +91,8 @@ export const SENSOR_DEFINITIONS = {
     },
     pm10: {
         label: () => t("gi.metrics.pm10"),
+        unit: "µg/m³",
+        icon: SENSOR_ICONS.pm10,
         link: "https://www.eea.europa.eu/help/glossary/eea-glossary/pm10",
         scale: new Scale([
             createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
@@ -88,6 +107,8 @@ export const SENSOR_DEFINITIONS = {
     },
     no2: {
         label: () => t("gi.metrics.nitrogen_dioxide"),
+        unit: "µg/m³",
+        icon: SENSOR_ICONS.no2,
         link: "https://vocabs.lter-europe.net/EnvThes/en/page/20842",
         scale: new Scale([
             createScaleItem("(400,)", { color: "#7e0023", label: "400.." }),
