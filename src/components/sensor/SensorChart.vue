@@ -21,6 +21,9 @@ const chartOptions = computed(() => {
                 datetimeUTC: false // Display datetime in local time
             }
         },
+        "colors": [
+            "#008480"
+        ],
     };
 });
 
@@ -44,11 +47,19 @@ const chartSeries = computed(() => {
     <GiApexChart
         v-if="chartSeries.length"
         type="line"
-        :height="300"
+        :height="400"
         :options="chartOptions"
         :series="chartSeries"
+        class="d-flex align-end"
     />
 </template>
 
 <style scoped>
+:deep(.apexcharts-zoom-icon.apexcharts-selected svg) {
+  fill: #007874 !important;
+}
+
+:deep(.apexcharts-pan-icon.apexcharts-selected svg) {
+  stroke: #007874 !important;
+}
 </style>

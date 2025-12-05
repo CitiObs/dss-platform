@@ -5,7 +5,7 @@ import { useKTUYApi } from "@/components/sensor/useKTUYApi.js";
 import { useSWNPApi } from "@/components/sensor/useSWNPApi.js";
 
 import BaseDialog from "@/components/base/BaseDialog.vue";
-import SensorInfoTable from "@/components/sensor/SensorInfoTable.vue";
+import SensorInfoSection from "@/components/sensor/SensorInfoSection.vue";
 import SensorChart from "@/components/sensor/SensorChart.vue";
 import NoData from "@/components/NoData.vue";
 
@@ -55,6 +55,7 @@ const sensorInfo = computed(() => {
         ...overviewData.value.sensorInfo,
         result: latestData?.result,
         phenomenonTime: latestData?.phenomenonTime,
+        sensorMetric: props.sensorMetric
     };
 
     return info;
@@ -115,16 +116,18 @@ watch(isDialogOpen, () => {
                     cols="12"
                     sm="5"
                 >
-                    <SensorInfoTable :sensor-info="sensorInfo" />
+                    <SensorInfoSection :sensor-info="sensorInfo" />
                 </v-col>
 
                 <v-col
                     cols="12"
                     sm="7"
+                    class="d-flex flex-column justify-end"
                 >
                     <SensorChart
                         :metric="sensorInfo.metric"
                         :chart-data="chartData"
+                        class="flex-grow-0"
                     />
                 </v-col>
             </v-row>
