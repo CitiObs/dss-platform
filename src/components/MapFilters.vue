@@ -6,6 +6,10 @@ const sensorMetric = defineModel("sensorMetric", { type: String, required: true 
 
 const { t } = useI18n();
 
+
+function selectMetric(key) {
+    sensorMetric.value = key;
+}
 // import { ref } from "vue";
 
 // const quality = ref(0);
@@ -17,20 +21,29 @@ const { t } = useI18n();
 </script>
 
 <template>
-    <div class="pa-4">
+    <div class="py-4 d-flex flex-column ga-2">
         <p class="header-spacing">
             {{ t("sensorMetric") }}
         </p>
 
-        <v-radio-group v-model="sensorMetric">
-            <v-radio
+        <v-list>
+            <v-list-item
                 v-for="(item, key) in SENSOR_DEFINITIONS"
                 :key="key"
-                :label="item.label()"
                 :value="key"
-            />
-        </v-radio-group>
-
+                :active="sensorMetric === key"
+                rounded
+                clickable
+                @click="selectMetric(key)"
+            >
+                <v-list-item-title>
+                    <v-icon class="mr-1">
+                        {{ item.icon }}
+                    </v-icon>
+                    {{ item.label() }}
+                </v-list-item-title>
+            </v-list-item>
+        </v-list>
         <!-- <p class="header-spacing">
             Quality
         </p>
@@ -74,7 +87,4 @@ const { t } = useI18n();
 </template>
 
 <style scoped>
-.header-spacing {
-    margin-bottom: 8px;
-}
 </style>
