@@ -157,8 +157,136 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         return response.data.Observations[0];
     };
 
+    /**
+     * Get the first (earliest) observation from a datastream
+     * @param {string} datastreamLink - The full datastream link or datastream ID
+     * @returns {Promise<Object|null>} The first observation with phenomenonTime and result
+     */
+    const getFirstObservation = async (datastreamLink) => {
+        if (!datastreamLink) {
+            console.error("datastreamLink is required");
+            return null;
+        }
+
+        const params = {
+            $top: 1,
+            $select: "phenomenonTime,result",
+            $orderby: "phenomenonTime asc",
+        };
+
+        const url = `${datastreamLink}/Observations`;
+
+        const { response, error } = await withAsync(api.get, url, {
+            params,
+            headers: {
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+            },
+        });
+
+        if (error) {
+            console.error("Error fetching first observation:", error);
+            return null;
+        }
+
+        return response.data.value?.[0] || null;
+    };
+
+    /**
+     * Get the last (latest) observation from a datastream
+     * @param {string} datastreamLink - The full datastream link or datastream ID
+     * @returns {Promise<Object|null>} The last observation with phenomenonTime and result
+     */
+    const getLastObservation = async (datastreamLink) => {
+        if (!datastreamLink) {
+            console.error("datastreamLink is required");
+            return null;
+        }
+
+        const params = {
+            $top: 1,
+            $select: "phenomenonTime,result",
+            $orderby: "phenomenonTime desc",
+        };
+
+        const url = `${datastreamLink}/Observations`;
+
+        const { response, error } = await withAsync(api.get, url, {
+            params,
+            headers: {
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+            },
+        });
+
+        if (error) {
+            console.error("Error fetching last observation:", error);
+            return null;
+        }
+
+        return response.data.value?.[0] || null;
+    };
+
+    /**
+     * Get both first and last observations in parallel
+     * @param {string} datastreamLink - The full datastream link or datastream ID
+     * @returns {Promise<{first: Object|null, last: Object|null}>}
+     */
+    const getFirstAndLastObservations = async (datastreamLink) => {
+        const [first, last] = await Promise.all([
+            getFirstObservation(datastreamLink),
+            getLastObservation(datastreamLink),
+        ]);
+
+        return { first, last };
+    };
+
+    /**
+     * Get observations in a custom date range
+     * @param {string} datastreamLink - Full Datastream @iot.link
+     * @param {string|Date} startDate
+     * @param {string|Date} endDate
+     * @returns {Promise<Array>}
+     */
+    const getObservationsByPeriod = async (datastreamLink, startDate, endDate) => {
+        if (!datastreamLink || !startDate || !endDate) {
+            console.error("datastreamLink, startDate and endDate are required");
+            return [];
+        }
+
+        const startISO = new Date(startDate).toISOString();
+        const endISO = new Date(endDate).toISOString();
+
+        const params = {
+            $orderby: "phenomenonTime asc",
+            $select: "phenomenonTime,result",
+            $filter: `phenomenonTime ge ${startISO} and phenomenonTime le ${endISO}`,
+        };
+
+        const url = `${datastreamLink}/Observations`;
+
+        const { response, error } = await withAsync(api.get, url, {
+            params,
+            headers: {
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+            },
+        });
+
+        if (error) {
+            console.error("Error fetching period observations:", error);
+            return [];
+        }
+
+        return response.data.value || [];
+    };
+
     return {
         getThings,
         getSimpleThingData,
+        getFirstObservation,
+        getLastObservation,
+        getFirstAndLastObservations,
+        getObservationsByPeriod,
     };
 }
