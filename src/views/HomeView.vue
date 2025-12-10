@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
-import { FeatureCollection, GiBtn } from "@geoint/geoint-vue";
+import { FeatureCollection, GiBtn, GiScale } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
@@ -14,7 +14,6 @@ import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import MapFilters from "@/components/MapFilters.vue";
 import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
-import GiScale from "@geoint/geoint-vue/src/components/geoint/scale/GiScale.vue";
 
 const sensorThingsApi = useSensorThingsApi();
 const { t } = useI18n();

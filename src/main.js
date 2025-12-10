@@ -1,9 +1,11 @@
 /* eslint no-unused-vars: "off" */
 // Styles
-import "./assets/scss/main.scss";
 import "@mdi/font/css/materialdesignicons.css";
 import "highlight.js/styles/atom-one-light.css";
 import "@vuepic/vue-datepicker/dist/main.css";
+import "@geoint/geoint-vue/dist/geoint-vue.css";
+import "@mdi/font/css/materialdesignicons.css";
+import "@/assets/scss/main.scss";
 
 // Generic
 import { createApp } from "vue";

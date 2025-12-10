@@ -1,6 +1,6 @@
 // ======= Shared Colors Across Both Themes ======= //
 const sharedColors = {
-    primary: "#1976D2",
+    primary: "#008480",
     secondary: "#00BD9D",
     accent: "#D27519",
     info: "#2196F3",
