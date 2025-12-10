@@ -14,6 +14,10 @@ export default {
         oldData: "Old data",
         noData: "No data",
         unknown: "Unknown",
+        latestData: "Latest data",
+        dataExploration: "Data Exploration",
+        noSensorsDataSingle: "No data found for the selected date.\nTry choosing a different one.",
+        noSensorsDataRange: "No data found for the selected dates.\nTry choosing a different one.",
     },
 
     home: {
