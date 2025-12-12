@@ -9,6 +9,7 @@ import { generateGrid, Extent } from "../helpers/grid";
 import { transformExtent } from "ol/proj";
 import { Circle, Fill, Stroke, Style } from "ol/style.js";
 import { useI18n } from "vue-i18n";
+import debounce from "lodash.debounce";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import MapFilters from "@/components/MapFilters.vue";
@@ -35,6 +36,7 @@ const tooltipContent = ref("");
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
 let pendingRequests = 0;
+let lastRequestId = 0;
 
 const mapSize = computed(() => {
     return {
@@ -262,36 +264,75 @@ function setMapGrid () {
     mapGrid.value = generateGrid(viewExtent, roundedZoom);
 }
 
+// Checks whether the given request ID has been superseded by a newer request
+function isCancelled(id) {
+    return id !== lastRequestId;
+}
+
+/**
+ * Fetches all "Things" for the current map grid and updates their observations.
+ *
+ * This function performs two phases:
+ * 1. Fetch all "Things" per grid cell from the sensor API.
+ * 2. For each Thing, fetch the latest observations based on the selected metric.
+ *
+ * Cancellation logic:
+ * - Each fetch cycle gets a unique requestId.
+ * - If a newer request starts (requestId !== lastRequestId), the current fetch is stopped.
+ * - Cancellation checks occur before and after async API calls to prevent stale data.
+ */
 async function fetchAllThings () {
+    // Create a unique request ID for this fetch cycle.
+    const requestId = ++lastRequestId;
+
     pendingRequests++;
     isLoading.value = true;
+
+    // Clear previous map data immediately — avoid ghost circles
     allThingsByCollection.value = [];
 
     try {
+        // ----  PHASE 1: Fetch all "Things" per grid cell ---- //
         for (const cell of mapGrid.value) {
+            if (isCancelled(requestId)) return; // Stop if a newer request exists
+
             const features = await sensorThingsApi.getThings(sensorMetric.value, cell);
 
-            if (!features) continue;
+            if (isCancelled(requestId)) return; // Stop if request got cancelled while waiting
 
-            allThingsByCollection.value.push(features);
+            if (features) {
+                allThingsByCollection.value.push(features);
+            }
         }
 
+        // ----  PHASE 2: Fetch datastreams/observations ---- //
         // For simple (non-grouped) Things, retrieve the corresponding Datastream ID
         // based on the selected metric. Then, fetch their latest observations so that
         // their map markers can be updated with the appropriate color.
-        allThingsByCollection.value.forEach(collection => {
-            if (collection.size() && collection.first("type") !== "count") {
-                collection.all().forEach(async (feature) => {
-                    const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
-                    const datastream = feature.get("datastreams").find(
-                        datastream => datastream.ObservedProperty.definition === metric
-                    );
-                    const datastreamId = datastream["@iot.id"];
-                    const data = await sensorThingsApi.getSimpleThingData(datastreamId);
-                    feature.set("Observations", data);
-                });
+        for (const collection of allThingsByCollection.value) {
+            if (isCancelled(requestId)) return; // Stop if a newer request exists
+
+            // Skip "count" collections
+            if (!collection.size() || collection.first("type") === "count") continue; // Skip count collections
+
+            for (const feature of collection.all()) {
+                if (isCancelled(requestId)) return; // Stop if request got cancelled while waiting
+
+                const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
+                const datastream = feature.get("datastreams").find(
+                    datastream => datastream.ObservedProperty.definition === metric
+                );
+
+                if (!datastream) continue;
+
+                const datastreamId = datastream["@iot.id"];
+                const data = await sensorThingsApi.getSimpleThingData(datastreamId);
+
+                if (isCancelled(requestId)) return; // Stop if request got cancelled while waiting
+
+                feature.set("Observations", data);
             }
-        });
+        }
     } finally {
         pendingRequests--;
         if (pendingRequests === 0){
@@ -300,9 +341,13 @@ async function fetchAllThings () {
     }
 }
 
+const fetchAllThingsDebounced = debounce(() => {
+    fetchAllThings();
+}, 300);
+
 async function onMapViewChanged() {
     setMapGrid();
-    await fetchAllThings();
+    fetchAllThingsDebounced();
 }
 
 function zoomIn() {
@@ -318,7 +363,7 @@ function zoomOut() {
 }
 
 watch(sensorMetric, async () => {
-    await fetchAllThings();
+    fetchAllThingsDebounced();
 });
 
 onBeforeRouteLeave(() => {
