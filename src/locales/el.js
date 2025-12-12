@@ -25,6 +25,7 @@ export default {
     home: {
         welcomeToCitiobs: "Καλωσήρθατε στο CitiObs!",
         loadingMapData: "Φόρτωση δεδομένων χάρτη, παρακαλώ περιμένετε...",
+        logoDSSText: "DSS",
     },
 
     footer: {
