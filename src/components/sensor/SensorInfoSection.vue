@@ -1,8 +1,9 @@
 <script setup>
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useDisplay } from "vuetify";
 import { formatTimestamp } from "@/helpers/dates.js";
-import { SENSOR_ICONS } from "@/common/sensorDefinitions.js";
+import { SENSOR_ICONS, SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 
 const props = defineProps({
     sensorInfo: {
@@ -12,16 +13,22 @@ const props = defineProps({
 });
 
 const { t } = useI18n();
+const { mdAndUp } = useDisplay();
 
 const sensorIcon = computed(() => {
     return SENSOR_ICONS[props.sensorInfo.sensorMetric] || "";
 });
 
-const sensorData = {
+const sensorData = computed(() => ({
     label: t("sensor.lastMeasurement"),
     icon: "mdi-clock-outline",
     value: formatTimestamp(props.sensorInfo.phenomenonTime),
-};
+}));
+
+const unitMeasurement = computed(() => {
+    return SENSOR_DEFINITIONS[props.sensorInfo.sensorMetric]?.unit || "";
+}
+);
 
 const tableFields = computed(() => {
     return [
@@ -52,7 +59,7 @@ const tableFields = computed(() => {
         >
             {{ sensorInfo.result }}
             <span class="unit-text">
-                {{ sensorInfo.unitOfMeasurement }}</span>
+                {{ unitMeasurement }}</span>
         </h2>
 
         <!-- Last measurement value + tooltip -->
@@ -79,7 +86,10 @@ const tableFields = computed(() => {
                 v-for="(field, index) in tableFields"
                 :key="index"
             >
-                <td class="no-wrap text-medium-emphasis">
+                <td
+                    class="text-medium-emphasis"
+                    :class="{ 'no-wrap': mdAndUp }"
+                >
                     {{ field.label }}
                 </td>
                 <td class="wrap-text gi-text-black ">

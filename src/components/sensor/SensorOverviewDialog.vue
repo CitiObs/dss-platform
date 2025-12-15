@@ -285,7 +285,8 @@ watch(isDialogOpen, () => {
                 <v-row v-else-if="sensorInfo && chartData.length">
                     <v-col
                         cols="12"
-                        sm="4"
+                        sm="5"
+                        md="4"
                         class="d-flex flex-column justify-end align-content-end"
                     >
                         <SensorInfoSection :sensor-info="sensorInfo" />
@@ -293,7 +294,8 @@ watch(isDialogOpen, () => {
 
                     <v-col
                         cols="12"
-                        sm="8"
+                        sm="7"
+                        md="8"
                         class="d-flex flex-column justify-end align-content-end"
                     >
                         <SensorChart
