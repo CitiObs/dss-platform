@@ -382,7 +382,7 @@ onBeforeRouteLeave(() => {
                 indeterminate
             />
         </div>
-
+        <!-- Drawer menu -->
         <template #drawer>
             <LayersDrawer
                 class="pa-5"
@@ -405,6 +405,7 @@ onBeforeRouteLeave(() => {
             </LayersDrawer>
         </template>
 
+        <!-- Map -->
         <div
             class="map-container text-center text-h1"
             style="position: relative;"
@@ -484,28 +485,17 @@ onBeforeRouteLeave(() => {
                 />
             </div>
 
-            <!-- Tooltip for all sensors -->
-            <v-tooltip
-                v-model="showTooltip"
-                class="sensor-tooltip"
+            <!-- Floating Tooltip for all sensors -->
+            <div
+                v-if="showTooltip"
+                class="sensor-tooltip rounded "
                 :style="{
                     left: tooltipPosition.x + 'px',
                     top: tooltipPosition.y + 'px'
                 }"
-                location="top"
             >
-                <template #activator="{ props }">
-                    <div
-                        v-bind="props"
-                        class="tooltip-activator"
-                        :style="{
-                            left: tooltipPosition.x + 'px',
-                            top: tooltipPosition.y + 'px'
-                        }"
-                    ></div>
-                </template>
-                <span>{{ tooltipContent }}</span>
-            </v-tooltip>
+                {{ tooltipContent }}
+            </div>
         </div>
 
         <SensorOverviewDialog
@@ -535,11 +525,16 @@ onBeforeRouteLeave(() => {
   pointer-events: none;
 }
 
-.tooltip-activator {
+.sensor-tooltip {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  pointer-events: none;
+  background: rgba(21, 21, 21, 0.9);
+  color: var(--gi-white);
+  padding: 8px 10px;
+  white-space: nowrap;
+  transform: translate(-50%, -120%); /* center horizontally, above cursor */
+  z-index: 1000;
+  font-size: 14px;
+  letter-spacing: 0.1px;
 }
 ::v-deep(.gi-scale-item__color) {
   width: 24px;
