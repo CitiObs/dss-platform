@@ -25,7 +25,7 @@ const copyrightText = computed(() => mdAndDown.value ? "gi-text-sm": "gi-text-ba
                     class="footer__copyright"
                     :class="copyrightText"
                 >
-                    © 2024, All rights reserved.
+                    © 2026, All rights reserved.
                 </p>
 
                 <img
