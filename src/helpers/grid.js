@@ -189,7 +189,7 @@ class Grid {
 }
 
 export function generateGrid(extent, zoom) {
-    zoom = zoom * 0.9; // make grid a bit coarser
+    zoom = Math.max(Math.floor(zoom * 0.9), 3); // integer zoom for nesting, min 3 to avoid continent-sized tiles
     const tilesExtent = extentToTiles(extent, zoom);
     const grid = new Grid();
     for (let y = tilesExtent.north; y <= tilesExtent.south; y++) {

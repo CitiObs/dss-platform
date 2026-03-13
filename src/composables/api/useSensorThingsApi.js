@@ -12,7 +12,13 @@ const BASE_URLS = [
     "https://api-virtualair.nilu.no/v1.1/",
 ];
 
-const MAX_ITEMS = 20;
+// Maximum sensors per grid cell before falling back to a cluster count.
+// Higher = more individual markers, but more observation requests per cell.
+const MAX_ITEMS = 200;
+
+// In-memory observation cache to avoid repeated per-datastream requests
+const observationCache = new Map();
+const OBSERVATION_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
 function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
@@ -80,68 +86,100 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
     const geoint = inject("geoint");
     const api = geoint.api("virtualair");
 
-    const getThings = async (metric, cell) => {
+    const getThings = async (metric, cell, zoom = 0) => {
         let collection = new FeatureCollection();
-        let totalItems = 0;
-        let areMoreItemsToFetch = false;
 
-        sensorStore.cleanUp();
+        // At high zoom the grid cells are small — allow more individual markers
+        // before falling back to a cluster count.
+        const maxItems = zoom >= 10 ? 1500 : zoom >= 7 ? 600 : zoom >= 6 ? 300 : MAX_ITEMS;
 
         const polygon = cell.toWKT();
-        const params = {
-            // $expand: `Datastreams($select=@iot.selfLink;$filter=ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}';$expand=ObservedProperty($select=definition),Observations($top=1;$orderby=phenomenonTime desc;$select=phenomenonTime,result),Thing($select=@iot.id),Sensor($select=@iot.id)), Locations($select=location)`,
-            // $filter: `st_within(Locations/location, geography'${polygon}')`,
-            // $count: true,
-            // $top: MAX_ITEMS,
+        const metricLink = SENSOR_DEFINITIONS[metric].link;
+        const cacheKey = `${metric}:${maxItems}:${polygon}`;
 
-            // New params
-            $expand: `Datastreams/ObservedProperty($select=definition),Locations($select=location)&$filter=st_within(Locations/location, geography'${polygon}') and Datastreams/ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}'&$count=true&$top=0`,
-        };
-
-        const paramsKey = JSON.stringify(params);
-        const storedSensorData = sensorStore.getSensorData(paramsKey);
-
+        const storedSensorData = sensorStore.getSensorData(cacheKey);
         if (storedSensorData) {
             storedSensorData.things.all().forEach((feature) => {
                 collection.push(feature);
             });
-
             return collection;
         }
 
-        const thingsFromAllApis = await fetchThingsFromAllApis(params, api);
+        // Phase 1: Count + one sample Thing for accurate cluster positioning
+        const countParams = {
+            $expand: "Datastreams/ObservedProperty($select=definition),Locations($select=location)",
+            $filter: `st_within(Locations/location, geography'${polygon}') and Datastreams/ObservedProperty/definition eq '${metricLink}'`,
+            $count: true,
+            $top: 1,
+        };
 
-        thingsFromAllApis.forEach((responseData) => {
+        const countResponses = await fetchThingsFromAllApis(countParams, api);
+
+        let totalCount = 0;
+        let sampleLocation = null;
+        countResponses.forEach((responseData) => {
             if (!responseData) return;
-
-            if (responseData["@iot.count"] > MAX_ITEMS) {
-                totalItems += responseData["@iot.count"];
-                areMoreItemsToFetch = true;
-                return;
+            totalCount += responseData["@iot.count"] || 0;
+            if (!sampleLocation && responseData.value?.[0]?.Locations?.[0]?.location) {
+                sampleLocation = responseData.value[0].Locations[0].location;
             }
+        });
 
+        if (totalCount === 0) {
+            return collection;
+        }
+
+        // Too many items — show cluster count marker at an actual sensor location
+        if (totalCount > maxItems) {
+            let clusterFeatures;
+            if (sampleLocation) {
+                const geojson = {
+                    type: "FeatureCollection",
+                    features: [{ type: "Feature", properties: {}, geometry: sampleLocation }],
+                };
+                clusterFeatures = new GeoJSON().readFeatures(geojson, { featureProjection: projection });
+            } else {
+                clusterFeatures = cell.getCenter().toFeatures();
+            }
+            collection = new FeatureCollection(clusterFeatures);
+            collection.attachProperties(
+                {},
+                {
+                    type: "count",
+                    count: totalCount,
+                }
+            );
+            sensorStore.setSensorData(cacheKey, collection, new Date());
+            return collection;
+        }
+
+        // Phase 2: Fetch actual Things (Observations fetched separately via fallback)
+        const fetchParams = {
+            $expand: `Datastreams($filter=ObservedProperty/definition eq '${metricLink}';$expand=ObservedProperty($select=definition)),Locations($select=location)`,
+            $filter: `st_within(Locations/location, geography'${polygon}') and Datastreams/ObservedProperty/definition eq '${metricLink}'`,
+            $top: maxItems,
+        };
+
+        const thingsResponses = await fetchThingsFromAllApis(fetchParams, api);
+
+        thingsResponses.forEach((responseData) => {
+            if (!responseData) return;
             for (const feature of thingsToGeoJSON(responseData.value, projection)) {
                 collection._features.push(feature);
             }
         });
 
-        if (areMoreItemsToFetch) {
-            collection = new FeatureCollection(cell.getCenter().toFeatures());
-            collection.attachProperties(
-                {},
-                {
-                    type: "count",
-                    count: totalItems,
-                }
-            );
-        }
-
-        sensorStore.setSensorData(paramsKey, collection, new Date());
-
+        sensorStore.setSensorData(cacheKey, collection, new Date());
         return collection;
     };
 
     const getSimpleThingData = async (id) => {
+        // Check in-memory cache first
+        const cached = observationCache.get(id);
+        if (cached && Date.now() - cached.timestamp < OBSERVATION_CACHE_TTL) {
+            return cached.data;
+        }
+
         const url = "https://api-virtualair.nilu.no/v1.1/";
 
         const { response, error } = await withAsync(
@@ -154,7 +192,9 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             return;
         }
 
-        return response.data.Observations[0];
+        const data = response.data.Observations[0];
+        observationCache.set(id, { data, timestamp: Date.now() });
+        return data;
     };
 
     /**

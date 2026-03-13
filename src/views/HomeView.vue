@@ -5,6 +5,7 @@ import { FeatureCollection, GiBtn, Scale, createScaleItem, GiScale } from "@geoi
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
+import { useSensorStore } from "@/stores/sensorStore.js";
 import { generateGrid, Extent } from "../helpers/grid";
 import { transformExtent } from "ol/proj";
 import { Circle, Fill, Stroke, Style } from "ol/style.js";
@@ -17,6 +18,7 @@ import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 
 const sensorThingsApi = useSensorThingsApi();
+const sensorStore = useSensorStore();
 const { t } = useI18n();
 
 const mapGrid = ref();
@@ -34,6 +36,15 @@ const tooltipPosition = ref({ x: 0, y: 0 });
 const tooltipContent = ref("");
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
+
+// Stable references for ol-view/ol-map props — inline arrays like [0, 5000000]
+// create new references on every parent re-render, which triggers vue3-openlayers'
+// properties watcher to re-apply zoom/center via view.applyOptions_(), resetting the view.
+const mapControls = [];
+const initialCenter = [0, 5000000];
+const initialExtent = [-20000000, -15000000, 20000000, 19000000];
+const initialZoom = 3;
+const maxZoom = 17;
 
 let pendingRequests = 0;
 let lastRequestId = 0;
@@ -288,50 +299,55 @@ async function fetchAllThings () {
     pendingRequests++;
     isLoading.value = true;
 
-    // Clear previous map data immediately — avoid ghost circles
-    allThingsByCollection.value = [];
+    // Run cache cleanup once per fetch cycle (not per grid cell)
+    sensorStore.cleanUp();
 
     try {
-        // ----  PHASE 1: Fetch all "Things" per grid cell ---- //
-        for (const cell of mapGrid.value) {
-            if (isCancelled(requestId)) return; // Stop if a newer request exists
+        // ----  PHASE 1: Fetch all "Things" per grid cell in parallel ---- //
+        // Existing markers stay visible until new data is ready.
+        const currentZoom = Math.round(mapRef.value.map.getView().getZoom());
+        const promises = [...mapGrid.value].map(cell =>
+            sensorThingsApi.getThings(sensorMetric.value, cell, currentZoom)
+        );
 
-            const features = await sensorThingsApi.getThings(sensorMetric.value, cell);
+        const results = await Promise.all(promises);
 
-            if (isCancelled(requestId)) return; // Stop if request got cancelled while waiting
+        if (isCancelled(requestId)) return;
 
-            if (features) {
-                allThingsByCollection.value.push(features);
-            }
-        }
+        // Collect valid results and swap markers atomically — prevents flickering
+        const newCollections = results.filter(features => features);
+        allThingsByCollection.value = newCollections;
 
-        // ----  PHASE 2: Fetch datastreams/observations ---- //
-        // For simple (non-grouped) Things, retrieve the corresponding Datastream ID
-        // based on the selected metric. Then, fetch their latest observations so that
-        // their map markers can be updated with the appropriate color.
+        // ----  PHASE 2: Fetch observations for individual Things ---- //
+        // Observations are fetched separately (not via $expand) to keep
+        // the Things query lightweight. Requests run in parallel with caching.
+        const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
+        const observationPromises = [];
+
         for (const collection of allThingsByCollection.value) {
-            if (isCancelled(requestId)) return; // Stop if a newer request exists
-
-            // Skip "count" collections
-            if (!collection.size() || collection.first("type") === "count") continue; // Skip count collections
+            if (!collection.size() || collection.first("type") === "count") continue;
 
             for (const feature of collection.all()) {
-                if (isCancelled(requestId)) return; // Stop if request got cancelled while waiting
-
-                const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
-                const datastream = feature.get("datastreams").find(
-                    datastream => datastream.ObservedProperty.definition === metric
+                const datastream = feature.get("datastreams")?.find(
+                    ds => ds.ObservedProperty?.definition === metric
                 );
 
                 if (!datastream) continue;
 
                 const datastreamId = datastream["@iot.id"];
-                const data = await sensorThingsApi.getSimpleThingData(datastreamId);
-
-                if (isCancelled(requestId)) return; // Stop if request got cancelled while waiting
-
-                feature.set("Observations", data);
+                observationPromises.push(
+                    sensorThingsApi.getSimpleThingData(datastreamId).then(data => {
+                        if (!isCancelled(requestId)) {
+                            feature.set("Observations", data);
+                        }
+                    })
+                );
             }
+        }
+
+        // Execute all observation requests in parallel
+        if (observationPromises.length > 0) {
+            await Promise.all(observationPromises);
         }
     } finally {
         pendingRequests--;
@@ -347,6 +363,9 @@ const fetchAllThingsDebounced = debounce(() => {
 
 async function onMapViewChanged() {
     setMapGrid();
+    // Immediately invalidate any in-flight fetch so stale Promise.all
+    // results from the previous zoom/pan are discarded on arrival.
+    lastRequestId++;
     fetchAllThingsDebounced();
 }
 
@@ -412,17 +431,17 @@ onBeforeRouteLeave(() => {
         >
             <ol-map
                 ref="mapRef"
-                :controls="[]"
+                :controls="mapControls"
                 :style="mapSize"
                 @click="handleMapClick"
                 @moveend="onMapViewChanged"
                 @pointermove="handleMapPointerMove"
             >
                 <ol-view
-                    :center="[0, 5000000]"
-                    :zoom="3"
-                    :extent="[-20000000, -15000000, 20000000, 19000000]"
-                    :max-zoom="17"
+                    :center="initialCenter"
+                    :zoom="initialZoom"
+                    :extent="initialExtent"
+                    :max-zoom="maxZoom"
                 />
 
                 <ol-tile-layer>
