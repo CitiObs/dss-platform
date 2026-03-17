@@ -23,12 +23,21 @@ import dayjs from "@/plugins/dayjs";
 import geoint from "@/plugins/geoint/geoint";
 import i18n from "@/plugins/geoint/i18n";
 
-createApp(App)
-    .use(createPinia())
+import { useAuthStore } from "@/stores/authStore";
+
+const app = createApp(App);
+const pinia = createPinia();
+
+app.use(pinia)
     .use(router)
     .use(i18n)
     .use(vuetify)
     .use(geoint)
     .use(OpenLayersMap)
-    .use(VueApexCharts)
-    .mount("#app");
+    .use(VueApexCharts);
+
+// Initialize Keycloak (non-blocking — map loads immediately)
+const authStore = useAuthStore();
+authStore.init();
+
+app.mount("#app");

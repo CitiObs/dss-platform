@@ -1,0 +1,44 @@
+{
+  "realm": "citiobs",
+  "enabled": true,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "loginWithEmailAllowed": true,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "co-frontend",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "https://citiobs2.draxis.gr/*",
+        "http://localhost:3002/*",
+        "http://*:3002/*"
+      ],
+      "webOrigins": [
+        "https://citiobs2.draxis.gr",
+        "http://localhost:3002",
+        "*"
+      ],
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "email": "demo@citiobs.eu",
+      "firstName": "Demo",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

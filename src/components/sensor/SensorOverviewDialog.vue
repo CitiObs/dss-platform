@@ -6,10 +6,14 @@ import { useSWNPApi } from "@/components/sensor/useSWNPApi.js";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi.js";
 import { GiPeriodSelect } from "@geoint/geoint-vue";
 
+import { useAlertStore } from "@/stores/alertStore.js";
+import { useAuthStore } from "@/stores/authStore.js";
+
 import BaseDialog from "@/components/base/BaseDialog.vue";
 import SensorInfoSection from "@/components/sensor/SensorInfoSection.vue";
 import SensorChart from "@/components/sensor/SensorChart.vue";
 import NoData from "@/components/NoData.vue";
+import AlertRulesDialog from "@/components/AlertRulesDialog.vue";
 
 const props = defineProps({
     apiCode: {
@@ -38,6 +42,20 @@ const apiMapping = {
     SWNP: useSWNPApi(),
 };
 const sensorThingsApi = useSensorThingsApi();
+const alertStore = useAlertStore();
+const authStore = useAuthStore();
+const showAlertDialog = ref(false);
+
+function addAlertForSensor() {
+    if (!sensorInfo.value?.thingId) return;
+    alertStore.addRule(authStore.userId, {
+        metric: props.sensorMetric,
+        operator: "gt",
+        threshold: 0,
+        sensorId: sensorInfo.value.thingId,
+    });
+    showAlertDialog.value = true;
+}
 
 const AGGREGATION_OPTIONS = {
     time: { show: false },
@@ -66,7 +84,7 @@ const chartData = computed(() => {
 });
 
 const sensorInfo = computed(() => {
-    if (!overviewData.value.sensorInfo) return;
+    if (!overviewData.value?.sensorInfo) return;
 
     const lastIndex = chartData.value.length - 1;
     const latestData = chartData.value[lastIndex];
@@ -84,7 +102,7 @@ const dialogTitle = computed(() => {
 });
 
 const availableDateRange = computed(() => {
-    if (!dateRangeBounds.value) return null;
+    if (!dateRangeBounds.value?.first?.phenomenonTime || !dateRangeBounds.value?.last?.phenomenonTime) return null;
 
     return {
         min: new Date(dateRangeBounds.value.first.phenomenonTime),
@@ -290,6 +308,21 @@ watch(isDialogOpen, () => {
                         class="d-flex flex-column justify-end align-content-end"
                     >
                         <SensorInfoSection :sensor-info="sensorInfo" />
+                        <v-btn
+                            v-if="authStore.isAuthenticated"
+                            variant="tonal"
+                            size="small"
+                            class="text-none mt-3"
+                            @click="addAlertForSensor"
+                        >
+                            <v-icon
+                                class="mr-1"
+                                size="16"
+                            >
+                                mdi-bell-plus
+                            </v-icon>
+                            {{ t("alerts.addAlertForSensor") }}
+                        </v-btn>
                     </v-col>
 
                     <v-col
@@ -384,6 +417,8 @@ watch(isDialogOpen, () => {
             </v-window-item>
         </v-window>
     </BaseDialog>
+
+    <AlertRulesDialog v-model="showAlertDialog" />
 </template>
 
 <style scoped>

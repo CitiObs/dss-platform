@@ -135,7 +135,9 @@ function tileToExtent(x, y, zoom) {
     const north = tile2lat(y, zoom);
     const east = tile2long(x + 1, zoom);
     const south = tile2lat(y + 1, zoom);
-    return new Extent(west, north, east, south);
+    const extent = new Extent(west, north, east, south);
+    extent.tileKey = `${zoom}:${x}:${y}`;
+    return extent;
 }
 
 class Grid {

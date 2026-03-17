@@ -21,6 +21,11 @@ const chartOptions = computed(() => {
                 datetimeUTC: false // Display datetime in local time
             }
         },
+        tooltip: {
+            x: {
+                format: "dd MMM yyyy, HH:mm"
+            }
+        },
         "colors": [
             "#008480"
         ],

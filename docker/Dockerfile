@@ -1,6 +1,6 @@
 # ==== Builder ====
 
-FROM node:18.16.0 AS builder
+FROM node:22.17.1 AS builder
 
 COPY ./ /var/tmp/app
 

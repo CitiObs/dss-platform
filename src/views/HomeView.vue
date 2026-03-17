@@ -1,16 +1,14 @@
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { FeatureCollection, GiBtn, Scale, createScaleItem, GiScale } from "@geoint/geoint-vue";
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
+import { useAlertStore } from "@/stores/alertStore.js";
+import { useAuthStore } from "@/stores/authStore.js";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
-import { useSensorStore } from "@/stores/sensorStore.js";
-import { generateGrid, Extent } from "../helpers/grid";
-import { transformExtent } from "ol/proj";
-import { Circle, Fill, Stroke, Style } from "ol/style.js";
+import { Circle, Fill, Stroke, Style, Text } from "ol/style.js";
 import { useI18n } from "vue-i18n";
-import debounce from "lodash.debounce";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import MapFilters from "@/components/MapFilters.vue";
@@ -18,12 +16,20 @@ import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
 
 const sensorThingsApi = useSensorThingsApi();
-const sensorStore = useSensorStore();
+const alertStore = useAlertStore();
+const authStore = useAuthStore();
 const { t } = useI18n();
 
-const mapGrid = ref();
-const allThingsByCollection = ref([]);
+const showAlertSnackbar = ref(false);
+const alertSnackbarText = ref("");
+
+const allSensorFeatures = ref(new FeatureCollection());
+const clusterDistance = ref(60); // pixels — OL cluster distance
+let currentMetric = null;
+let fetchAbortFlag = 0; // for cancellation
+
 const sensorMetric = ref(Object.keys(SENSOR_DEFINITIONS)[0]);
+const activeOnly = ref(false);
 const mapRef = ref();
 const clusterRef = ref();
 const apiCode = ref();
@@ -34,6 +40,11 @@ const isLoading = ref(false);
 const showTooltip = ref(false);
 const tooltipPosition = ref({ x: 0, y: 0 });
 const tooltipContent = ref("");
+
+// --- Co-located sensor picker (revertable) ---
+const showSensorPicker = ref(false);
+const sensorPickerPosition = ref({ x: 0, y: 0 });
+const sensorPickerItems = ref([]);
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
@@ -46,51 +57,17 @@ const initialExtent = [-20000000, -15000000, 20000000, 19000000];
 const initialZoom = 3;
 const maxZoom = 17;
 
-let pendingRequests = 0;
-let lastRequestId = 0;
-
 const mapSize = computed(() => {
     return {
         width: "100%",
         height: `calc(100vh - ${occupiedHeight}px)`,
     };
 });
+
 // Compute the drawer height so that all content is displayed correctly.
 // The "25px" offset harmonizes the drawer height with the footer's height.
 const drawerHeight = computed(() => {
     return `calc(100vh - ${occupiedHeight - 25}px)`;
-});
-
-const gridFeatures = computed(() => {
-    if (!mapGrid.value) return new FeatureCollection();
-
-    return new FeatureCollection(mapGrid.value.toFeatures());
-});
-
-const thingsAggregated = computed(() => {
-    const things = new FeatureCollection();
-
-    allThingsByCollection.value.forEach(features => {
-        if (features.size() == 1 && features.first("count")) {
-            things.push(features.first());
-        }
-    });
-
-    return things;
-});
-
-const thingsRaw = computed(() => {
-    const things = new FeatureCollection();
-
-    allThingsByCollection.value.forEach(features => {
-        if (!features.first("count")) {
-            features.all().forEach(feature => {
-                things.push(feature);
-            });
-        }
-    });
-
-    return things;
 });
 
 const scale = computed(() => {
@@ -127,13 +104,56 @@ const currentSensorLabelWithUnit = computed(() => {
     return `${label} ${unit ? `(${unit})` : ""}`;
 });
 
+const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+
+const displayedFeatures = computed(() => {
+    const all = allSensorFeatures.value.all();
+    if (!activeOnly.value) return all;
+    return all.filter(hasRecentObservationData);
+});
+
 function hasObservationData(feature) {
     const observations = feature.get("Observations");
     return observations !== null && observations !== undefined;
 }
 
-function thingsRawStyle(feature) {
+function hasRecentObservationData(feature) {
     const observations = feature.get("Observations");
+    if (!observations) return false;
+    const date = new Date(observations.phenomenonTime);
+    return date >= new Date(Date.now() - FIVE_DAYS_MS);
+}
+
+/**
+ * Style function for the OL Cluster layer.
+ * Handles both cluster markers (multiple sensors) and individual sensor markers.
+ */
+function clusterStyle(feature) {
+    const subFeatures = feature.get("features");
+    if (!subFeatures) return;
+
+    const size = subFeatures.length;
+
+    // Cluster with multiple sensors — show a circle with count label
+    if (size > 1) {
+        const radius = Math.min(10 + Math.log2(size) * 5, 35);
+        return new Style({
+            image: new Circle({
+                radius: radius,
+                fill: new Fill({ color: "#005e5b" }),
+                stroke: new Stroke({ color: "#00b6df", width: 3 }),
+            }),
+            text: new Text({
+                text: size.toString(),
+                font: "14px sans-serif",
+                fill: new Fill({ color: "#e6f3f2" }),
+            }),
+        });
+    }
+
+    // Single sensor — same logic as old thingsRawStyle
+    const singleFeature = subFeatures[0];
+    const observations = singleFeature.get("Observations");
 
     if (!observations) {
         return new Style({
@@ -177,61 +197,34 @@ function thingsRawStyle(feature) {
     });
 }
 
-function thingsAggregatedStyle(feature, style) {
-    style.getText().setText(feature.get("count").toString());
-    return style;
-}
-
-function getFeatureProperties (event) {
-    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
-    const featureProperties = featuresAtPixel.map(feature => feature.getProperties());
-
-    return featureProperties;
-}
-
-function handleMapClick (event) {
-    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel);
-
-    if (!featuresAtPixel.length) return;
-
-    const feature = featuresAtPixel[0];
-    const hasData = hasObservationData(feature);
-
-    // Only open dialog if the sensor has data
-    if (!hasData) return;
-
-    const clickedThings = getFeatureProperties(event);
-
-    apiCode.value = "SWNP";
-    datastreamLink.value = clickedThings[0].datastreamSelfLink;
-    thingLink.value = clickedThings[0].selfLink;
-    isSensorOverviewDialog.value = true;
-}
-
 /**
- * Handles pointer movement on the map and updates the hover behavior for individual sensors.
- *
- * - Detects whether the pointer is currently over an individual (non-aggregated) sensor feature.
- * - Shows a tooltip displaying the sensor ID (and "No data" when applicable).
- * - Changes the cursor to a pointer only for sensors with observation data.
- * - Resets tooltip and cursor state when no features are hovered.
- *
- * @param {Object} event - The OpenLayers pointer event containing pixel coordinates.
+ * Handles pointer movement on the map.
+ * Uses the cluster layer ref to filter hit detection to only that layer.
+ * - For clusters, shows a tooltip with the count.
+ * - For individual sensors, shows the sensor ID (and "no data" state).
  */
 function handleMapPointerMove(event) {
-    // Get all layers from the map
-    const layers = mapRef.value.map.getLayers().getArray();
+    const clusterLayer = clusterRef.value?.vectorLayer;
+    if (!clusterLayer) return;
 
-    // Find the vector layer used for individual (non-aggregated) sensors
-    const individualSensorsLayer = layers[3];
-
-    // Restrict hit detection to that layer only
     const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel, {
-        layerFilter: (layer) => layer === individualSensorsLayer
+        layerFilter: (layer) => layer === clusterLayer
     });
 
     if (featuresAtPixel.length > 0) {
-        const feature = featuresAtPixel[0];
+        const clusterFeature = featuresAtPixel[0];
+        const subFeatures = clusterFeature.get("features") || [clusterFeature];
+
+        // If it's a cluster with multiple sensors, show count tooltip
+        if (subFeatures.length > 1) {
+            mapRef.value.map.getTargetElement().style.cursor = "pointer";
+            showTooltip.value = true;
+            tooltipPosition.value = { x: event.pixel[0], y: event.pixel[1] };
+            tooltipContent.value = `${subFeatures.length} sensors`;
+            return;
+        }
+
+        const feature = subFeatures[0];
         const hasData = hasObservationData(feature);
         const sensorId = feature.get("id") || t("sensor.unknown");
 
@@ -242,131 +235,150 @@ function handleMapPointerMove(event) {
         };
 
         if (hasData) {
-            // Has data - show pointer cursor and sensorId
+            // Has data — show pointer cursor and sensor ID
             mapRef.value.map.getTargetElement().style.cursor = "pointer";
             tooltipContent.value = sensorId;
         } else {
-            // No data - show default cursor and sensorId: No data
+            // No data — show default cursor and sensor ID with "no data"
             mapRef.value.map.getTargetElement().style.cursor = "default";
             tooltipContent.value = `${sensorId}: ${t("sensor.noData")}`;
         }
     } else {
-        // No features - reset everything
+        // No features under pointer — reset everything
         mapRef.value.map.getTargetElement().style.cursor = "";
         showTooltip.value = false;
         tooltipContent.value = "";
     }
 }
 
-function setMapGrid () {
-    const view = mapRef.value.map.getView();
-    const zoom = view.getZoom();
-    const extent3857 = view.calculateExtent();
-    const extent4326 = transformExtent(extent3857, "EPSG:3857", "EPSG:4326");
+/**
+ * Handles click on the map.
+ * - For clusters, zooms in to uncluster.
+ * - For individual sensors with data, opens the sensor overview dialog.
+ */
+function handleMapClick(event) {
+    // Close sensor picker if open and clicking elsewhere
+    showSensorPicker.value = false;
 
-    const viewExtent = new Extent(
-        extent4326[0],
-        extent4326[3],
-        extent4326[2],
-        extent4326[1]
-    );
+    const clusterLayer = clusterRef.value?.vectorLayer;
+    if (!clusterLayer) return;
 
-    const roundedZoom = Math.round(zoom);
-    mapGrid.value = generateGrid(viewExtent, roundedZoom);
+    const featuresAtPixel = mapRef.value.map.getFeaturesAtPixel(event.pixel, {
+        layerFilter: (layer) => layer === clusterLayer
+    });
+
+    if (!featuresAtPixel.length) return;
+
+    const clusterFeature = featuresAtPixel[0];
+    const subFeatures = clusterFeature.get("features") || [clusterFeature];
+
+    // If cluster, try to zoom in — but if already zoomed in far enough,
+    // open the first sensor with data (sensors share the same location)
+    if (subFeatures.length > 1) {
+        const view = mapRef.value.map.getView();
+        const currentZoom = view.getZoom();
+
+        if (currentZoom < maxZoom - 1) {
+            // Still room to zoom — try to uncluster
+            view.animate({
+                center: clusterFeature.getGeometry().getCoordinates(),
+                zoom: currentZoom + 2,
+                duration: 300,
+            });
+            return;
+        }
+
+        // At max zoom and cluster won't break apart — show sensor picker
+        const clickableSensors = subFeatures.filter(f => f.get("datastreamSelfLink"));
+        if (!clickableSensors.length) return;
+
+        // Only one clickable sensor — open directly
+        if (clickableSensors.length === 1) {
+            openSensorDialog(clickableSensors[0]);
+            return;
+        }
+
+        // Multiple sensors — show picker popup (dialog fetches its own data)
+        sensorPickerItems.value = clickableSensors.map(f => ({
+            id: f.get("id") || t("sensor.unknown"),
+            name: f.get("name") || "",
+            hasData: hasObservationData(f),
+            datastreamSelfLink: f.get("datastreamSelfLink"),
+            selfLink: f.get("selfLink"),
+        }));
+        sensorPickerPosition.value = { x: event.pixel[0], y: event.pixel[1] };
+        showSensorPicker.value = true;
+        return;
+    }
+
+    // Single sensor — open dialog only if it has observation data
+    const feature = subFeatures[0];
+    if (!feature.get("datastreamSelfLink") || !hasObservationData(feature)) return;
+
+    openSensorDialog(feature);
 }
 
-// Checks whether the given request ID has been superseded by a newer request
-function isCancelled(id) {
-    return id !== lastRequestId;
+// --- Co-located sensor picker helpers (revertable) ---
+function openSensorDialog(feature) {
+    showSensorPicker.value = false;
+    apiCode.value = "SWNP";
+    datastreamLink.value = feature.get ? feature.get("datastreamSelfLink") : feature.datastreamSelfLink;
+    thingLink.value = feature.get ? feature.get("selfLink") : feature.selfLink;
+    isSensorOverviewDialog.value = true;
+}
+
+function onSensorPicked(sensor) {
+    showSensorPicker.value = false;
+    apiCode.value = "SWNP";
+    datastreamLink.value = sensor.datastreamSelfLink;
+    thingLink.value = sensor.selfLink;
+    isSensorOverviewDialog.value = true;
 }
 
 /**
- * Fetches all "Things" for the current map grid and updates their observations.
- *
- * This function performs two phases:
- * 1. Fetch all "Things" per grid cell from the sensor API.
- * 2. For each Thing, fetch the latest observations based on the selected metric.
- *
- * Cancellation logic:
- * - Each fetch cycle gets a unique requestId.
- * - If a newer request starts (requestId !== lastRequestId), the current fetch is stopped.
- * - Cancellation checks occur before and after async API calls to prevent stale data.
+ * Fetches all sensors for the current metric in a single paginated request.
+ * Uses fetchAbortFlag to discard results from superseded requests.
  */
-async function fetchAllThings () {
-    // Create a unique request ID for this fetch cycle.
-    const requestId = ++lastRequestId;
+async function loadSensors() {
+    const requestId = ++fetchAbortFlag;
+    const metric = sensorMetric.value;
 
-    pendingRequests++;
+    // Skip if same metric already loaded
+    if (metric === currentMetric && allSensorFeatures.value.size() > 0) return;
+
     isLoading.value = true;
 
-    // Run cache cleanup once per fetch cycle (not per grid cell)
-    sensorStore.cleanUp();
-
     try {
-        // ----  PHASE 1: Fetch all "Things" per grid cell in parallel ---- //
-        // Existing markers stay visible until new data is ready.
-        const currentZoom = Math.round(mapRef.value.map.getView().getZoom());
-        const promises = [...mapGrid.value].map(cell =>
-            sensorThingsApi.getThings(sensorMetric.value, cell, currentZoom)
-        );
+        const features = await sensorThingsApi.getAllThings(metric, {
+            // Step 1 done — show markers immediately (no colors yet)
+            onProgress: (earlyFeatures) => {
+                if (requestId !== fetchAbortFlag) return;
+                allSensorFeatures.value = new FeatureCollection(earlyFeatures);
+            },
+        });
 
-        const results = await Promise.all(promises);
+        // Step 2 done — observations loaded, trigger re-render for colors
+        if (requestId !== fetchAbortFlag) return;
 
-        if (isCancelled(requestId)) return;
+        currentMetric = metric;
+        // Force reactivity update so styles recalculate with observation data
+        allSensorFeatures.value = new FeatureCollection(features);
 
-        // Collect valid results and swap markers atomically — prevents flickering
-        const newCollections = results.filter(features => features);
-        allThingsByCollection.value = newCollections;
-
-        // ----  PHASE 2: Fetch observations for individual Things ---- //
-        // Observations are fetched separately (not via $expand) to keep
-        // the Things query lightweight. Requests run in parallel with caching.
-        const metric = SENSOR_DEFINITIONS[sensorMetric.value].link;
-        const observationPromises = [];
-
-        for (const collection of allThingsByCollection.value) {
-            if (!collection.size() || collection.first("type") === "count") continue;
-
-            for (const feature of collection.all()) {
-                const datastream = feature.get("datastreams")?.find(
-                    ds => ds.ObservedProperty?.definition === metric
-                );
-
-                if (!datastream) continue;
-
-                const datastreamId = datastream["@iot.id"];
-                observationPromises.push(
-                    sensorThingsApi.getSimpleThingData(datastreamId).then(data => {
-                        if (!isCancelled(requestId)) {
-                            feature.set("Observations", data);
-                        }
-                    })
-                );
-            }
+        // Evaluate alert rules against loaded sensor data
+        alertStore.clear();
+        alertStore.loadRules(authStore.userId);
+        const result = alertStore.evaluate(features, metric);
+        if (result && result.count > 0) {
+            alertSnackbarText.value = t("alerts.newAlerts", { count: result.count, threshold: result.threshold, unit: result.unit }, result.count);
+            showAlertSnackbar.value = true;
         }
-
-        // Execute all observation requests in parallel
-        if (observationPromises.length > 0) {
-            await Promise.all(observationPromises);
-        }
+    } catch (e) {
+        console.error("Failed to load sensors:", e);
     } finally {
-        pendingRequests--;
-        if (pendingRequests === 0){
+        if (requestId === fetchAbortFlag) {
             isLoading.value = false;
         }
     }
-}
-
-const fetchAllThingsDebounced = debounce(() => {
-    fetchAllThings();
-}, 300);
-
-async function onMapViewChanged() {
-    setMapGrid();
-    // Immediately invalidate any in-flight fetch so stale Promise.all
-    // results from the previous zoom/pan are discarded on arrival.
-    lastRequestId++;
-    fetchAllThingsDebounced();
 }
 
 function zoomIn() {
@@ -381,13 +393,48 @@ function zoomOut() {
     view.animate({ zoom: zoom - 1, duration: 250 });
 }
 
-watch(sensorMetric, async () => {
-    fetchAllThingsDebounced();
+watch(sensorMetric, () => {
+    currentMetric = null; // Force reload for new metric
+    loadSensors();
+});
+
+// Re-evaluate alerts when user logs in/out or rules are added/removed
+watch(() => authStore.isAuthenticated, () => {
+    alertStore.loadRules(authStore.userId);
+    reEvaluateAlerts();
+});
+
+watch(() => alertStore.rulesVersion, () => {
+    reEvaluateAlerts();
+});
+
+function reEvaluateAlerts() {
+    if (allSensorFeatures.value.size() === 0) return;
+    alertStore.clear();
+    const result = alertStore.evaluate(allSensorFeatures.value.all(), sensorMetric.value);
+    if (result && result.count > 0) {
+        alertSnackbarText.value = t("alerts.newAlerts", { count: result.count, threshold: result.threshold, unit: result.unit }, result.count);
+        showAlertSnackbar.value = true;
+    }
+}
+
+watch(() => alertStore.selectedAlert, (alert) => {
+    if (!alert) return;
+    if (alert.datastreamSelfLink) {
+        apiCode.value = "SWNP";
+        datastreamLink.value = alert.datastreamSelfLink;
+        thingLink.value = alert.selfLink;
+        isSensorOverviewDialog.value = true;
+    }
+    alertStore.selectedAlert = null;
+});
+
+onMounted(() => {
+    loadSensors();
 });
 
 onBeforeRouteLeave(() => {
-    const vectorSource = clusterRef.value.source.getSource();
-    vectorSource.clear(true);
+    // Clean up is handled automatically by Vue reactivity
 });
 
 </script>
@@ -407,7 +454,7 @@ onBeforeRouteLeave(() => {
                 class="pa-5"
                 :style="{ height: drawerHeight }"
             >
-                <MapFilters v-model:sensor-metric="sensorMetric" />
+                <MapFilters v-model:sensor-metric="sensorMetric" v-model:active-only="activeOnly" />
                 <v-card variant="tonal">
                     <v-card-text>
                         <h2 class="mb-5 gi-text-h6 gi-font-weight-regular">
@@ -434,7 +481,6 @@ onBeforeRouteLeave(() => {
                 :controls="mapControls"
                 :style="mapSize"
                 @click="handleMapClick"
-                @moveend="onMapViewChanged"
                 @pointermove="handleMapPointerMove"
             >
                 <ol-view
@@ -448,45 +494,11 @@ onBeforeRouteLeave(() => {
                     <ol-source-osm />
                 </ol-tile-layer>
 
-                <ol-vector-layer>
-                    <ol-source-vector :features="gridFeatures.all()" />
-                    <ol-style>
-                        <ol-style-stroke
-                            color="#abc"
-                            :width="1"
-                        />
-                    </ol-style>
-                </ol-vector-layer>
-
-                <ol-vector-layer>
-                    <ol-source-vector :features="thingsAggregated.all()" />
-                    <ol-style :override-style-function="thingsAggregatedStyle">
-                        <ol-style-circle radius="25">
-                            <ol-style-fill color="#005e5b" />
-                            <ol-style-stroke
-                                color="#00b6df"
-                                width="3"
-                            />
-                        </ol-style-circle>
-                        <ol-style-text
-                            text="10"
-                            font="16px sans-serif"
-                            fill="#e6f3f2"
-                        />
-                    </ol-style>
-                </ol-vector-layer>
-
-                <ol-vector-layer>
-                    <ol-source-vector :features="thingsRaw.all()" />
-                    <ol-style :override-style-function="thingsRawStyle">
-                        <ol-style-circle radius="10">
-                            <ol-style-fill color="#008480" />
-                            <ol-style-stroke
-                                color="#008480"
-                                width="1"
-                            />
-                        </ol-style-circle>
-                    </ol-style>
+                <ol-vector-layer ref="clusterRef">
+                    <ol-source-cluster :distance="clusterDistance">
+                        <ol-source-vector :features="displayedFeatures" />
+                    </ol-source-cluster>
+                    <ol-style :override-style-function="clusterStyle" />
                 </ol-vector-layer>
             </ol-map>
 
@@ -515,7 +527,64 @@ onBeforeRouteLeave(() => {
             >
                 {{ tooltipContent }}
             </div>
+
+            <!-- Co-located sensor picker popup (revertable) -->
+            <v-card
+                v-if="showSensorPicker"
+                class="sensor-picker rounded-lg elevation-8"
+                :style="{
+                    left: sensorPickerPosition.x + 'px',
+                    top: sensorPickerPosition.y + 'px'
+                }"
+            >
+                <v-card-title class="gi-text-body-1 gi-font-weight-medium pa-3 pb-1">
+                    {{ t("sensor.selectSensor") }}
+                </v-card-title>
+                <v-list
+                    density="compact"
+                    class="pa-1"
+                >
+                    <v-list-item
+                        v-for="sensor in sensorPickerItems"
+                        :key="sensor.id"
+                        class="rounded"
+                        @click="onSensorPicked(sensor)"
+                    >
+                        <template #prepend>
+                            <v-icon
+                                :color="sensor.hasData ? 'success' : 'grey'"
+                                size="10"
+                            >
+                                mdi-circle
+                            </v-icon>
+                        </template>
+                        <v-list-item-title class="gi-text-body-2">
+                            {{ sensor.id }}
+                        </v-list-item-title>
+                        <v-list-item-subtitle
+                            v-if="sensor.name"
+                            class="gi-text-caption"
+                        >
+                            {{ sensor.name }}
+                        </v-list-item-subtitle>
+                    </v-list-item>
+                </v-list>
+            </v-card>
         </div>
+
+        <v-snackbar
+            v-model="showAlertSnackbar"
+            color="warning"
+            timeout="5000"
+            location="top"
+            multi-line
+            min-width="auto"
+        >
+            <v-icon class="mr-2">
+                mdi-alert
+            </v-icon>
+            {{ alertSnackbarText }}
+        </v-snackbar>
 
         <SensorOverviewDialog
             v-model="isSensorOverviewDialog"
@@ -565,5 +634,16 @@ onBeforeRouteLeave(() => {
 
 :deep(.gi-scale-item__marker) {
     display: none !important;
+}
+
+/* Co-located sensor picker (revertable) */
+.sensor-picker {
+    position: absolute;
+    transform: translate(-50%, -110%);
+    z-index: 1001;
+    min-width: 200px;
+    max-width: 320px;
+    max-height: 300px;
+    overflow-y: auto;
 }
 </style>

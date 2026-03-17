@@ -24,7 +24,7 @@ function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
-function thingsToGeoJSON(things, projection) {
+function thingsToGeoJSON(things, projection, metricLink) {
     const plainFeatures = {
         type: "FeatureCollection",
         features: [],
@@ -37,12 +37,17 @@ function thingsToGeoJSON(things, projection) {
         const geometry = cloneDeep(locationData);
         geometry.type = capitalize(geometry.type);
 
+        // Find the datastream matching the selected metric
+        const matchingDs = thing.Datastreams?.find(
+            ds => ds.ObservedProperty?.definition === metricLink
+        ) || thing.Datastreams?.[0];
+
         const properties = {
-            ...cloneDeep(thing.properties), // Clone original properties
+            ...cloneDeep(thing.properties),
             id: thing["@iot.id"],
             selfLink: thing["@iot.selfLink"],
-            datastreamSelfLink: thing.Datastreams[0]?.["@iot.selfLink"],
-            observationsNavigationLink: thing.Datastreams[0]?.["Observations@iot.navigationLink"],
+            datastreamSelfLink: matchingDs?.["@iot.selfLink"],
+            observationsNavigationLink: matchingDs?.["Observations@iot.navigationLink"],
             name: thing.name,
             description: thing.description,
             datastreams: thing.Datastreams,
@@ -105,6 +110,27 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             return collection;
         }
 
+        // At high zoom, cells are small — skip the count query and fetch directly
+        if (zoom >= 10) {
+            const fetchParams = {
+                $expand: `Datastreams($filter=ObservedProperty/definition eq '${metricLink}';$expand=ObservedProperty($select=definition),Observations($orderby=phenomenonTime desc;$top=1;$select=phenomenonTime,result)),Locations($select=location)`,
+                $filter: `st_within(Locations/location, geography'${polygon}') and Datastreams/ObservedProperty/definition eq '${metricLink}'`,
+                $top: maxItems,
+            };
+
+            const thingsResponses = await fetchThingsFromAllApis(fetchParams, api);
+
+            thingsResponses.forEach((responseData) => {
+                if (!responseData) return;
+                for (const feature of thingsToGeoJSON(responseData.value, projection)) {
+                    collection._features.push(feature);
+                }
+            });
+
+            sensorStore.setSensorData(cacheKey, collection, new Date());
+            return collection;
+        }
+
         // Phase 1: Count + one sample Thing for accurate cluster positioning
         const countParams = {
             $expand: "Datastreams/ObservedProperty($select=definition),Locations($select=location)",
@@ -153,9 +179,9 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             return collection;
         }
 
-        // Phase 2: Fetch actual Things (Observations fetched separately via fallback)
+        // Phase 2: Fetch actual Things with observations embedded
         const fetchParams = {
-            $expand: `Datastreams($filter=ObservedProperty/definition eq '${metricLink}';$expand=ObservedProperty($select=definition)),Locations($select=location)`,
+            $expand: `Datastreams($filter=ObservedProperty/definition eq '${metricLink}';$expand=ObservedProperty($select=definition),Observations($orderby=phenomenonTime desc;$top=1;$select=phenomenonTime,result)),Locations($select=location)`,
             $filter: `st_within(Locations/location, geography'${polygon}') and Datastreams/ObservedProperty/definition eq '${metricLink}'`,
             $top: maxItems,
         };
@@ -192,7 +218,7 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
             return;
         }
 
-        const data = response.data.Observations[0];
+        const data = response.data.Observations?.[0] || null;
         observationCache.set(id, { data, timestamp: Date.now() });
         return data;
     };
@@ -321,8 +347,106 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
         return response.data.value || [];
     };
 
+    /**
+     * Fetches ALL sensors for a metric using the 2-step approach:
+     * Step 1: Light fetch with $skip pagination (gets all Things)
+     * Step 2: Batch-fetch latest observation per datastream
+     *
+     * Returns an object: { features: OL Feature[], totalLoaded: number }
+     * Calls onProgress(features) after Step 1 so the map can render immediately.
+     */
+    const getAllThings = async (metric, { onProgress } = {}) => {
+        const metricLink = SENSOR_DEFINITIONS[metric].link;
+
+        // Step 1: Light fetch — flat expand (Peter's recommended format)
+        // Uses $skip pagination with fixed increments of $top
+        const PAGE_SIZE = 500;
+        const lightParams = {
+            $expand: `Datastreams/ObservedProperty($select=definition),Locations($select=location)`,
+            $filter: `Datastreams/ObservedProperty/definition eq '${metricLink}'`,
+            $top: PAGE_SIZE,
+        };
+
+        let allThings = [];
+
+        for (const baseUrl of BASE_URLS) {
+            let skip = 0;
+
+            while (true) {
+                const params = { ...lightParams, $skip: skip };
+                const { response, error } = await withAsync(api.get, `${baseUrl}/Things`, { params });
+
+                if (error) {
+                    console.error(error);
+                    break;
+                }
+
+                const data = response.data;
+                if (!data.value || data.value.length === 0) break;
+
+                allThings = allThings.concat(data.value);
+
+                // Use @iot.nextLink to detect if more pages exist
+                // (the API may return fewer items than $top due to server limits)
+                if (!data["@iot.nextLink"]) break;
+
+                skip += PAGE_SIZE;
+            }
+        }
+
+        // Deduplicate by @iot.id
+        const ids = allThings.map(t => t["@iot.id"]);
+        const uniqueIds = new Set(ids);
+
+        const features = thingsToGeoJSON(allThings, projection, metricLink);
+
+        // Notify caller so map can render markers immediately (without colors)
+        if (onProgress) onProgress(features);
+
+        // Step 2: Batch-fetch latest observation per datastream
+        const CONCURRENCY = 15;
+        const queue = [];
+        let noMatchingDs = 0;
+
+        for (const feature of features) {
+            const datastreams = feature.get("datastreams");
+            const ds = datastreams?.find(d => d.ObservedProperty?.definition === metricLink);
+            if (!ds) {
+                noMatchingDs++;
+                continue;
+            }
+
+            queue.push({ feature, datastreamId: ds["@iot.id"] });
+        }
+
+
+        // Process observation requests with concurrency limit
+        let idx = 0;
+        let obsFound = 0;
+        let obsMissing = 0;
+        async function processNext() {
+            while (idx < queue.length) {
+                const { feature, datastreamId } = queue[idx++];
+                const obs = await getSimpleThingData(datastreamId);
+                if (obs) {
+                    obsFound++;
+                    feature.set("Observations", obs);
+                } else {
+                    obsMissing++;
+                }
+            }
+        }
+
+        const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => processNext());
+        await Promise.all(workers);
+
+
+        return features;
+    };
+
     return {
         getThings,
+        getAllThings,
         getSimpleThingData,
         getFirstObservation,
         getLastObservation,

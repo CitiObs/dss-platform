@@ -1,6 +1,5 @@
 import { inject } from "vue";
 import { withAsync } from "@geoint/geoint-vue";
-import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 
 export function useSWNPApi () {
     const geoint = inject("geoint");
@@ -91,10 +90,9 @@ export function useSWNPApi () {
         return response.data;
     }
 
-    async function getSensorDatastreams (datastreamLink, metric) {
-        const params = { 
-            $expand: "Observations($select=phenomenonTime,result;$orderby=phenomenonTime desc),Thing($select=@iot.id,name),Sensor($select=name),License($select=name)",
-            $filter: `(ObservedProperty/definition eq '${SENSOR_DEFINITIONS[metric].link}')`,
+    async function getSensorDatastreams (datastreamLink) {
+        const params = {
+            $expand: "Observations($select=phenomenonTime,result;$orderby=phenomenonTime desc),Thing,Sensor",
         };
 
         const { response, error } = await withAsync(
@@ -122,11 +120,18 @@ export function useSWNPApi () {
         abortController = new AbortController();
 
         const [datastream, locations] = await Promise.all([
-            getSensorDatastreams(datastreamLink, metric),
+            getSensorDatastreams(datastreamLink),
             getSensorLocations(thingLink)
         ]);
 
-        if (!datastream || !locations) return;
+        if (!datastream || !locations) {
+            return;
+        }
+
+        // Guard against missing Observations (some datastreams have none)
+        if (!datastream.Observations) {
+            datastream.Observations = [];
+        }
 
         let nextLink = datastream["Observations@iot.nextLink"];
 
@@ -138,20 +143,27 @@ export function useSWNPApi () {
             if (!moreObservations) break;
 
             nextLink = moreObservations?.["@iot.nextLink"];
-            datastream.Observations.push(...moreObservations.value);
+            datastream.Observations.push(...(moreObservations.value || []));
         }
 
         const oldestTime = getOldestTimeOfLastLocation(locations);
-        const lastLocationObservations = filterObservationsByTime(oldestTime, datastream.Observations);
+        let lastLocationObservations = datastream.Observations;
+
+        if (oldestTime) {
+            const filtered = filterObservationsByTime(oldestTime, datastream.Observations);
+            if (filtered.length > 0) {
+                lastLocationObservations = filtered;
+            }
+        }
 
         const sensorInfo = {
             metric: datastream.name,
-            unitOfMeasurement: datastream.unitOfMeasurement.symbol,
-            thingId: datastream.Thing["@iot.id"],
-            thingName: datastream.Thing.name,
-            sensorType: datastream.Sensor.name,
+            unitOfMeasurement: datastream.unitOfMeasurement?.symbol || "",
+            thingId: datastream.Thing?.["@iot.id"] || "",
+            thingName: datastream.Thing?.name || "",
+            sensorType: datastream.Sensor?.name || "",
             dataOrigin: "citiobs_demo",
-            license: datastream.License.name
+            license: datastream.License?.name || ""
         };
 
         return { 

@@ -3,6 +3,7 @@ import { useI18n } from "vue-i18n";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 
 const sensorMetric = defineModel("sensorMetric", { type: String, required: true });
+const activeOnly = defineModel("activeOnly", { type: Boolean, default: false });
 
 const { t } = useI18n();
 
@@ -44,6 +45,15 @@ function selectMetric(key) {
                 </v-list-item-title>
             </v-list-item>
         </v-list>
+
+        <v-checkbox
+            v-model="activeOnly"
+            :label="t('activeOnly')"
+            density="compact"
+            hide-details
+            class="mt-2"
+        />
+
         <!-- <p class="header-spacing">
             Quality
         </p>
