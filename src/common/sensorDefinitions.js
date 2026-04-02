@@ -109,7 +109,7 @@ export const SENSOR_DEFINITIONS = {
         label: () => t("gi.metrics.nitrogen_dioxide"),
         unit: "µg/m³",
         icon: SENSOR_ICONS.no2,
-        link: "https://vocabs.lter-europe.net/EnvThes/en/page/20842",
+        link: "https://vocabs.lter-europe.net/envthes/en/page/20842",  // lowercase 'envthes' - API is case-sensitive
         scale: new Scale([
             createScaleItem("(400,)", { color: "#7e0023", label: "400.." }),
             createScaleItem("(200,400]", { color: "#8f3f97", label: "200..400" }),

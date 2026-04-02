@@ -35,16 +35,23 @@ export const useAlertStore = defineStore("alerts", () => {
     }
 
     function addRule(userId, rule) {
+        // Station is required
+        if (!rule.sensorId || !rule.sensorId.trim()) {
+            console.warn("[alertStore] Cannot add rule: sensorId is required");
+            return false;
+        }
+        
         rules.value.push({
             id: Date.now().toString(),
             metric: rule.metric,
             operator: rule.operator,
             threshold: Number(rule.threshold),
             unit: SENSOR_DEFINITIONS[rule.metric]?.unit || "",
-            sensorId: rule.sensorId || null,
+            sensorId: rule.sensorId.trim(),
         });
         saveRules(userId);
         rulesVersion.value++;
+        return true;
     }
 
     function removeRule(userId, ruleId) {
@@ -66,13 +73,11 @@ export const useAlertStore = defineStore("alerts", () => {
             for (const feature of features) {
                 const sensorId = feature.get("id") || "Unknown";
 
-                // If rule targets a specific sensor, skip others
-                if (rule.sensorId && rule.sensorId !== sensorId) continue;
+                // Rule now REQUIRES a specific sensor (sensorId is mandatory)
+                if (rule.sensorId !== sensorId) continue;
 
-                const observations = feature.get("Observations");
-                if (!observations) continue;
-
-                const value = observations.result;
+                // Use lastObservationResult (stored on feature from cache/API)
+                const value = feature.get("lastObservationResult");
                 if (value == null) continue;
 
                 const exceeds = rule.operator === "gt"
@@ -91,7 +96,7 @@ export const useAlertStore = defineStore("alerts", () => {
                     threshold: rule.threshold,
                     operator: rule.operator,
                     unit: rule.unit,
-                    time: observations.phenomenonTime,
+                    time: new Date().toISOString(),  // Current time (we don't have phenomenonTime on features)
                     datastreamSelfLink: feature.get("datastreamSelfLink"),
                     selfLink: feature.get("selfLink"),
                 });

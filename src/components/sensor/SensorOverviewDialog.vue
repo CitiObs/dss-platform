@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { useKTUYApi } from "@/components/sensor/useKTUYApi.js";
 import { useSWNPApi } from "@/components/sensor/useSWNPApi.js";
@@ -67,6 +67,9 @@ const isLoading = ref(false);
 const activeTab = ref("latest");
 const dateRangeBounds = ref(null);
 const selectedPeriod = ref([]);
+const actualDatastreamLink = ref(null); // The actual datastream link used by getOverviewData
+const isPreFetching = ref(false); // Flag to prevent onPeriodChange during initial pre-fetch
+const lastFetchedPeriod = ref(null); // Track last fetched period to prevent duplicate requests
 
 const chartData = computed(() => {
     if (!overviewData.value) return [];
@@ -114,10 +117,14 @@ const availableDateRange = computed(() => {
 // The component expects a 2-item array:
 // ['YYYY-MM-DDT00:00:00.000Z', 'YYYY-MM-DDT23:59:59.999Z']
 //
-// We take the latest available phenomenonTime and create a range
-// covering the full day—from the start (00:00:00.000) to the end
-// of that same day (23:59:59.999).
+// Uses selectedPeriod if already set (user changed date), otherwise
+// falls back to the latest available phenomenonTime.
 const defaultDateRange = computed(() => {
+    // If we already have a selected period, use that (prevents resetting on re-render)
+    if (selectedPeriod.value && selectedPeriod.value.length === 2) {
+        return selectedPeriod.value;
+    }
+    
     if (!dateRangeBounds.value?.last?.phenomenonTime) return null;
 
     const lastDate = new Date(dateRangeBounds.value.last.phenomenonTime);
@@ -164,12 +171,24 @@ async function handleDialogOpen() {
     activeTab.value = "latest";
     selectedPeriod.value = [];
     dateRangeBounds.value = null;
+    actualDatastreamLink.value = null;
+    lastFetchedPeriod.value = null;
+    isPreFetching.value = false;
     if (!props.datastreamLink || !props.thingLink) return;
 
     isLoading.value = true;
 
     // Fetch overview data based on the provided API code
-    overviewData.value = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink, props.thingLink, props.sensorMetric);
+    const result = await apiMapping[props.apiCode].getOverviewData(props.datastreamLink, props.thingLink, props.sensorMetric);
+    
+    if (result) {
+        overviewData.value = result;
+        // Store the actual datastream link used (for Data Exploration)
+        actualDatastreamLink.value = result.datastreamLink || props.datastreamLink;
+        console.log("[SensorOverviewDialog] props.datastreamLink:", props.datastreamLink);
+        console.log("[SensorOverviewDialog] result.datastreamLink:", result.datastreamLink);
+        console.log("[SensorOverviewDialog] actualDatastreamLink:", actualDatastreamLink.value);
+    }
 
     isLoading.value = false;
 }
@@ -179,21 +198,81 @@ async function onTabChanged(tab) {
 
     if (dateRangeBounds.value) return; // Prevent re-loading
 
+    // Use the actual datastream link from getOverviewData (matches the "Latest Data" tab)
+    const datastreamToUse = actualDatastreamLink.value || props.datastreamLink;
+
+    // Check if we have a valid datastream link
+    if (!datastreamToUse) {
+        console.warn("[SensorOverviewDialog] No datastreamLink available for data exploration");
+        console.log("[SensorOverviewDialog] thingLink:", props.thingLink);
+        return;
+    }
+
+    console.log("[SensorOverviewDialog] Fetching date range for:", datastreamToUse);
+
     isLoading.value = true;
 
     try {
         dateRangeBounds.value = await sensorThingsApi.getFirstAndLastObservations(
-            props.datastreamLink
+            datastreamToUse
         );
+        console.log("[SensorOverviewDialog] Date range bounds:", dateRangeBounds.value);
+        
+        // Pre-fetch data for the last available day (default date)
+        // This avoids relying on GiPeriodSelect's initial emit which has timezone issues
+        if (dateRangeBounds.value?.last?.phenomenonTime) {
+            const lastDate = new Date(dateRangeBounds.value.last.phenomenonTime);
+            
+            // Create range for the full day in LOCAL time
+            const startOfDay = new Date(lastDate);
+            startOfDay.setHours(0, 0, 0, 0);
+            
+            const endOfDay = new Date(lastDate);
+            endOfDay.setHours(23, 59, 59, 999);
+            
+            // Set flag to prevent onPeriodChange from firing during this update
+            isPreFetching.value = true;
+            
+            // Track this period so duplicate emits are skipped
+            lastFetchedPeriod.value = `${startOfDay.toISOString()}-${endOfDay.toISOString()}`;
+            
+            // Update selectedPeriod for noSensorsMessage computed
+            selectedPeriod.value = [startOfDay.toISOString(), endOfDay.toISOString()];
+            
+            console.log("[onTabChanged] Pre-fetching data for default date:", startOfDay.toISOString(), "to", endOfDay.toISOString());
+            
+            const obs = await sensorThingsApi.getObservationsByPeriod(
+                datastreamToUse,
+                startOfDay,
+                endOfDay
+            );
+            
+            console.log("[onTabChanged] Pre-fetched observations:", obs.length);
+            overviewData.value.fullHistory = obs;
+            
+            // Allow onPeriodChange to work again after a tick
+            setTimeout(() => { isPreFetching.value = false; }, 100);
+        }
     } finally {
         isLoading.value = false;
     }
 }
 
-async function onPeriodChange(range) {
+function onPeriodChange(range) {
+    // Delay state changes to avoid interfering with GiPeriodSelect's internal lifecycle
+    // This prevents the "$el is null" error caused by re-rendering during emit
+    setTimeout(() => handlePeriodChange(range), 0);
+}
+
+async function handlePeriodChange(range) {
+    // Skip if we're in the middle of pre-fetching (prevents loop)
+    if (isPreFetching.value) {
+        console.log("[onPeriodChange] Skipping - pre-fetch in progress");
+        return;
+    }
+    
     if (!range || !Array.isArray(range) || range.length < 2) {
         // No valid range yet → reset or skip
-        selectedPeriod.value = null;
         return;
     }
 
@@ -215,16 +294,39 @@ async function onPeriodChange(range) {
 
     const startDate = new Date(start);
     const endDate = new Date(end);
+    
+    const periodKey = `${startDate.toISOString()}-${endDate.toISOString()}`;
+    
+    // Skip if we already fetched this exact period (prevents infinite loop)
+    if (lastFetchedPeriod.value === periodKey) {
+        console.log("[onPeriodChange] Skipping - already fetched this period");
+        return;
+    }
 
-    // Update selectedPeriod so UI reflects the correct full-day range
+    isLoading.value = true;
+    lastFetchedPeriod.value = periodKey;
+    
+    // Update selectedPeriod for noSensorsMessage computed
     selectedPeriod.value = [startDate.toISOString(), endDate.toISOString()];
 
     try {
+        // Use the actual datastream link from getOverviewData (matches the "Latest Data" tab)
+        const datastreamToUse = actualDatastreamLink.value || props.datastreamLink;
+        
+        console.log("[onPeriodChange] Fetching observations for:", datastreamToUse);
+        console.log("[onPeriodChange] Date range:", startDate.toISOString(), "to", endDate.toISOString());
+        
         const obs = await sensorThingsApi.getObservationsByPeriod(
-            props.datastreamLink,
+            datastreamToUse,
             startDate,
             endDate
         );
+
+        console.log("[onPeriodChange] Received observations:", obs.length);
+        if (obs.length > 0) {
+            console.log("[onPeriodChange] First obs:", obs[0]);
+            console.log("[onPeriodChange] Last obs:", obs[obs.length - 1]);
+        }
 
         overviewData.value.fullHistory = obs;
 
@@ -307,7 +409,10 @@ watch(isDialogOpen, () => {
                         md="4"
                         class="d-flex flex-column justify-end align-content-end"
                     >
-                        <SensorInfoSection :sensor-info="sensorInfo" />
+                        <SensorInfoSection
+                            :sensor-info="sensorInfo"
+                            :chart-data="chartData"
+                        />
                         <v-btn
                             v-if="authStore.isAuthenticated"
                             variant="tonal"
@@ -333,6 +438,7 @@ watch(isDialogOpen, () => {
                     >
                         <SensorChart
                             :metric="sensorInfo.metric"
+                            :sensor-metric="sensorMetric"
                             :chart-data="chartData"
                         />
                     </v-col>
@@ -372,7 +478,6 @@ watch(isDialogOpen, () => {
                     <!-- Data Period Selector -->
                     <v-col class="flex-grow-0 pa-0">
                         <GiPeriodSelect
-                            v-model="selectedPeriod"
                             :aggregation-options="AGGREGATION_OPTIONS"
                             class="date-picker-styles d-flex justify-center"
                             :calendar-options="{
@@ -394,6 +499,7 @@ watch(isDialogOpen, () => {
                     >
                         <SensorChart
                             :metric="sensorInfo.metric"
+                            :sensor-metric="sensorMetric"
                             :chart-data="chartData"
                         />
                     </v-col>

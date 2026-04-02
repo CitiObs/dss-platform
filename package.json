@@ -7,7 +7,8 @@
         "build": "vite build",
         "preview": "vite preview",
         "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
-        "format": "prettier .  --write"
+        "format": "prettier .  --write",
+        "generate-cache": "node scripts/generate-sensor-cache.js"
     },
     "devDependencies": {
         "@mdi/font": "^7.4.47",

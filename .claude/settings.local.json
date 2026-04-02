@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npx vite:*)",
+      "Bash(node --version && npm --version)",
+      "Bash(node -e \"\nconst fs = require\\('fs'\\);\ntry {\n  const code = fs.readFileSync\\('src/composables/api/useSensorThingsApi.js', 'utf8'\\);\n  new Function\\(code\\);\n  console.log\\('useSensorThingsApi.js: syntax OK \\(basic check\\)'\\);\n} catch\\(e\\) {\n  // ES module syntax won't parse with new Function, check for obvious issues\n  console.log\\('useSensorThingsApi.js: module syntax \\(import/export\\), checking manually...'\\);\n}\n\" 2>&1)",
+      "Bash(npx eslint:*)",
+      "Bash(grep -n \"MutationObserver\\\\|\\\\$slots\\\\|renderSlot\\\\|deep.*true\" /home/emakras/Desktop/CitiObs/co-frontend/node_modules/vue3-openlayers/dist/vue3-openlayers.js | head -30)",
+      "Bash(wc -l /home/emakras/Desktop/CitiObs/co-frontend/src/components/sensor/*.vue)",
+      "Bash(mkdir -p src)",
+      "Bash(mv api:*)",
+      "Bash(mv router:*)",
+      "Bash(rm index.js)",
+      "Bash(find /home/emakras/Desktop/CitiObs/co-frontend/version2 -type d -empty -delete)",
+      "Bash(npm install:*)"
+    ]
+  }
+}

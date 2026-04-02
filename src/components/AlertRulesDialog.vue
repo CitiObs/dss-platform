@@ -26,12 +26,21 @@ const operatorOptions = [
     { value: "lt", title: "<" },
 ];
 
+const sensorIdError = ref("");
+
 function addRule() {
+    // Validate sensorId is required
+    if (!newSensorId.value || !newSensorId.value.trim()) {
+        sensorIdError.value = t("alerts.stationRequired");
+        return;
+    }
+    sensorIdError.value = "";
+    
     alertStore.addRule(authStore.userId, {
         metric: newMetric.value,
         operator: newOperator.value,
         threshold: newThreshold.value,
-        sensorId: newSensorId.value.trim() || null,
+        sensorId: newSensorId.value.trim(),
     });
     newThreshold.value = 0;
     newSensorId.value = "";
@@ -81,12 +90,6 @@ function metricLabel(metric) {
                                 class="gi-text-caption"
                             >
                                 {{ t("alerts.station") }}: {{ rule.sensorId }}
-                            </v-list-item-subtitle>
-                            <v-list-item-subtitle
-                                v-else
-                                class="gi-text-caption text-medium-emphasis"
-                            >
-                                {{ t("alerts.allStations") }}
                             </v-list-item-subtitle>
                             <template #append>
                                 <v-btn
@@ -150,12 +153,13 @@ function metricLabel(metric) {
                     <v-text-field
                         v-model="newSensorId"
                         :label="t('alerts.stationId')"
-                        :placeholder="t('alerts.allStations')"
+                        :placeholder="t('alerts.stationPlaceholder')"
+                        :error-messages="sensorIdError"
                         density="compact"
-                        hide-details
                         variant="outlined"
                         clearable
                         style="flex: 1;"
+                        @update:model-value="sensorIdError = ''"
                     />
                     <v-btn
                         color="primary"

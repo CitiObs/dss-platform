@@ -10,6 +10,10 @@ const props = defineProps({
         type: Object,
         required: true
     },
+    chartData: {
+        type: Array,
+        default: () => [],
+    },
 });
 
 const { t } = useI18n();
@@ -37,6 +41,81 @@ const tableFields = computed(() => {
         { label: t("sensor.dataOrigin"), value: props.sensorInfo.dataOrigin },
         { label: t("sensor.license"), value: props.sensorInfo.license }
     ];
+});
+
+const stats = computed(() => {
+    const values = props.chartData
+        .map(d => d.result)
+        .filter(v => v !== null && v !== undefined && v !== -99);
+
+    if (values.length < 2) return null;
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+
+    return {
+        min: min.toFixed(1),
+        max: max.toFixed(1),
+        avg: avg.toFixed(1),
+        count: values.length,
+    };
+});
+
+// Health recommendation levels per metric
+// Each level: { max, icon, color, key } — first match wins (check in order)
+const HEALTH_LEVELS = {
+    pm25: [
+        { max: 10, icon: "mdi-emoticon-happy", color: "success", key: "good" },
+        { max: 15, icon: "mdi-emoticon-neutral", color: "light-green", key: "moderate" },
+        { max: 25, icon: "mdi-emoticon-sad", color: "orange", key: "unhealthySensitive" },
+        { max: 50, icon: "mdi-emoticon-angry", color: "deep-orange", key: "unhealthy" },
+        { max: Infinity, icon: "mdi-skull", color: "red-darken-3", key: "hazardous" },
+    ],
+    pm10: [
+        { max: 20, icon: "mdi-emoticon-happy", color: "success", key: "good" },
+        { max: 45, icon: "mdi-emoticon-neutral", color: "light-green", key: "moderate" },
+        { max: 50, icon: "mdi-emoticon-sad", color: "orange", key: "unhealthySensitive" },
+        { max: 100, icon: "mdi-emoticon-angry", color: "deep-orange", key: "unhealthy" },
+        { max: Infinity, icon: "mdi-skull", color: "red-darken-3", key: "hazardous" },
+    ],
+    no2: [
+        { max: 25, icon: "mdi-emoticon-happy", color: "success", key: "good" },
+        { max: 40, icon: "mdi-emoticon-neutral", color: "light-green", key: "moderate" },
+        { max: 100, icon: "mdi-emoticon-sad", color: "orange", key: "unhealthySensitive" },
+        { max: 200, icon: "mdi-emoticon-angry", color: "deep-orange", key: "unhealthy" },
+        { max: Infinity, icon: "mdi-skull", color: "red-darken-3", key: "hazardous" },
+    ],
+    airTemperature: [
+        { max: 0, icon: "mdi-snowflake", color: "blue", key: "freezing" },
+        { max: 10, icon: "mdi-thermometer-low", color: "light-blue", key: "cold" },
+        { max: 30, icon: "mdi-thermometer", color: "success", key: "comfortable" },
+        { max: 35, icon: "mdi-thermometer-high", color: "orange", key: "hot" },
+        { max: Infinity, icon: "mdi-fire", color: "red-darken-3", key: "heatStress" },
+    ],
+    relativeHumidity: [
+        { max: 30, icon: "mdi-water-off", color: "orange", key: "dryAir" },
+        { max: 60, icon: "mdi-water-check", color: "success", key: "comfortable" },
+        { max: 70, icon: "mdi-water-percent", color: "light-green", key: "humid" },
+        { max: Infinity, icon: "mdi-water-alert", color: "orange", key: "veryHumid" },
+    ],
+};
+
+const healthRecommendation = computed(() => {
+    const metric = props.sensorInfo.sensorMetric;
+    const value = props.sensorInfo.result;
+    const levels = HEALTH_LEVELS[metric];
+
+    if (!levels || value === null || value === undefined) return null;
+
+    const level = levels.find(l => value <= l.max);
+    if (!level) return null;
+
+    return {
+        icon: level.icon,
+        color: level.color,
+        text: t(`sensor.health.${level.key}`),
+    };
 });
 </script>
 
@@ -75,6 +154,19 @@ const tableFields = computed(() => {
             </template>
             <span>{{ sensorData.label }}</span>
         </v-tooltip>
+
+        <!-- Health Recommendation Banner -->
+        <v-alert
+            v-if="healthRecommendation"
+            :color="healthRecommendation.color"
+            :icon="healthRecommendation.icon"
+            variant="tonal"
+            density="compact"
+            class="mt-2 text-body-2"
+            style="align-self: stretch;"
+        >
+            {{ healthRecommendation.text }}
+        </v-alert>
     </div>
 
     <!-- Info Table  -->
@@ -98,6 +190,60 @@ const tableFields = computed(() => {
             </tr>
         </tbody>
     </v-table>
+
+    <!-- Statistical Summary -->
+    <div
+        v-if="stats"
+        class="mt-3 pa-3 bg-grey-lighten-3 rounded"
+    >
+        <p class="text-caption text-medium-emphasis mb-2">
+            {{ t("sensor.statistics") }} ({{ stats.count }} {{ t("sensor.measurements") }})
+        </p>
+        <div class="d-flex justify-space-between">
+            <div class="text-center">
+                <v-icon
+                    size="16"
+                    color="blue"
+                >
+                    mdi-arrow-down
+                </v-icon>
+                <p class="text-body-2 font-weight-bold">
+                    {{ stats.min }}
+                </p>
+                <p class="text-caption text-medium-emphasis">
+                    {{ t("sensor.min") }}
+                </p>
+            </div>
+            <div class="text-center">
+                <v-icon
+                    size="16"
+                    color="orange"
+                >
+                    mdi-tilde
+                </v-icon>
+                <p class="text-body-2 font-weight-bold">
+                    {{ stats.avg }}
+                </p>
+                <p class="text-caption text-medium-emphasis">
+                    {{ t("sensor.avg") }}
+                </p>
+            </div>
+            <div class="text-center">
+                <v-icon
+                    size="16"
+                    color="red"
+                >
+                    mdi-arrow-up
+                </v-icon>
+                <p class="text-body-2 font-weight-bold">
+                    {{ stats.max }}
+                </p>
+                <p class="text-caption text-medium-emphasis">
+                    {{ t("sensor.max") }}
+                </p>
+            </div>
+        </div>
+    </div>
 </template>
 
 <style scoped>

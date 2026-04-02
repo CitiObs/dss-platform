@@ -8,6 +8,10 @@ import { useAuthStore } from "@/stores/authStore.js";
 import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 import { Circle, Fill, Stroke, Style, Text } from "ol/style.js";
+import Feature from "ol/Feature.js";
+import Point from "ol/geom/Point.js";
+import { fromLonLat } from "ol/proj.js";
+import { getDistance } from "ol/sphere.js";
 import { useI18n } from "vue-i18n";
 
 import LayersDrawer from "@/components/layout/LayersDrawer.vue";
@@ -45,6 +49,10 @@ const tooltipContent = ref("");
 const showSensorPicker = ref(false);
 const sensorPickerPosition = ref({ x: 0, y: 0 });
 const sensorPickerItems = ref([]);
+
+// Geolocation state
+const isLocating = ref(false);
+const userLocationFeatures = ref([]);
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
@@ -104,29 +112,63 @@ const currentSensorLabelWithUnit = computed(() => {
     return `${label} ${unit ? `(${unit})` : ""}`;
 });
 
-const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+/**
+ * Pre-parsed scale intervals for fast color lookup.
+ * Computed once per metric change, not on every marker render.
+ */
+const parsedScaleIntervals = computed(() => {
+    const sensorDef = SENSOR_DEFINITIONS[sensorMetric.value];
+    if (!sensorDef?.scale?._items) return [];
+    
+    const intervals = [];
+    for (const item of sensorDef.scale._items) {
+        const def = item._definition;
+        if (!def || def === "[-99999,-999999]") continue;
+        
+        const match = def.match(/^([\[\(])(-?\d*\.?\d*),(-?\d*\.?\d*)([\]\)])$/);
+        if (!match) continue;
+        
+        const [, leftBracket, minStr, maxStr, rightBracket] = match;
+        intervals.push({
+            min: minStr === "" ? -Infinity : parseFloat(minStr),
+            max: maxStr === "" ? Infinity : parseFloat(maxStr),
+            leftInclusive: leftBracket === "[",
+            rightInclusive: rightBracket === "]",
+            color: item._attributes?.color || "#30c050",
+        });
+    }
+    return intervals;
+});
 
 const displayedFeatures = computed(() => {
     const all = allSensorFeatures.value.all();
     if (!activeOnly.value) return all;
-    return all.filter(hasRecentObservationData);
+    
+    // isActive is pre-computed in the static cache (has data in last 5 days)
+    const active = all.filter(f => f.get("isActive") === true);
+    console.log(`[displayedFeatures] Total: ${all.length}, Active (last 5 days): ${active.length}`);
+    
+    return active;
 });
 
-function hasObservationData(feature) {
-    const observations = feature.get("Observations");
-    return observations !== null && observations !== undefined;
-}
-
-function hasRecentObservationData(feature) {
-    const observations = feature.get("Observations");
-    if (!observations) return false;
-    const date = new Date(observations.phenomenonTime);
-    return date >= new Date(Date.now() - FIVE_DAYS_MS);
+/**
+ * Fast color lookup using pre-parsed intervals.
+ */
+function getScaleColor(value) {
+    if (value === null || value === undefined) return "#30c050";
+    
+    for (const interval of parsedScaleIntervals.value) {
+        const aboveMin = interval.leftInclusive ? value >= interval.min : value > interval.min;
+        const belowMax = interval.rightInclusive ? value <= interval.max : value < interval.max;
+        if (aboveMin && belowMax) return interval.color;
+    }
+    return "#30c050";
 }
 
 /**
  * Style function for the OL Cluster layer.
  * Handles both cluster markers (multiple sensors) and individual sensor markers.
+ * Uses the scale colors from SENSOR_DEFINITIONS to color markers based on observation values.
  */
 function clusterStyle(feature) {
     const subFeatures = feature.get("features");
@@ -151,25 +193,30 @@ function clusterStyle(feature) {
         });
     }
 
-    // Single sensor — same logic as old thingsRawStyle
+    // Single sensor — use isActive flag (pre-computed: has data in last 5 days)
     const singleFeature = subFeatures[0];
-    const observations = singleFeature.get("Observations");
+    const isActive = singleFeature.get("isActive");
+    const lastValue = singleFeature.get("lastObservationResult");
+    const sensorId = singleFeature.get("id");
 
-    if (!observations) {
+    // DEBUG: Log properties for specific sensors (uncomment to debug)
+    // if (sensorId === "KTUY_8046") {
+    //     console.log(`[clusterStyle] ${sensorId}: isActive=${isActive}, lastValue=${lastValue}`);
+    // }
+
+    // No data at all — black
+    if (lastValue === null || lastValue === undefined) {
         return new Style({
             image: new Circle({
-                fill: new Fill({ color: "#00000000" }),
+                fill: new Fill({ color: "#000000" }),
                 stroke: new Stroke({ color: "#555", width: 2 }),
                 radius: 10,
             }),
         });
     }
 
-    const date = new Date(observations.phenomenonTime);
-    const now = new Date();
-    const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
-
-    if (date < fiveDaysAgo) {
+    // Has data but not recent (older than 5 days) — gray
+    if (!isActive) {
         return new Style({
             image: new Circle({
                 fill: new Fill({ color: "#8a8888" }),
@@ -179,14 +226,8 @@ function clusterStyle(feature) {
         });
     }
 
-    let color = "#30c050"; // Default color if no scale is defined
-
-    if (scale.value) {
-        const matchingItem = scale.value.getAttributes(observations.result);
-        if (matchingItem) {
-            color = matchingItem.color;
-        }
-    }
+    // Active sensor — use pre-computed scale color lookup (fast)
+    const color = getScaleColor(lastValue);
 
     return new Style({
         image: new Circle({
@@ -225,8 +266,8 @@ function handleMapPointerMove(event) {
         }
 
         const feature = subFeatures[0];
-        const hasData = hasObservationData(feature);
         const sensorId = feature.get("id") || t("sensor.unknown");
+        const hasDatastreamLink = !!feature.get("datastreamSelfLink");
 
         showTooltip.value = true;
         tooltipPosition.value = {
@@ -234,12 +275,12 @@ function handleMapPointerMove(event) {
             y: event.pixel[1]
         };
 
-        if (hasData) {
-            // Has data — show pointer cursor and sensor ID
+        if (hasDatastreamLink) {
+            // Has datastream link — show pointer cursor and sensor ID
             mapRef.value.map.getTargetElement().style.cursor = "pointer";
             tooltipContent.value = sensorId;
         } else {
-            // No data — show default cursor and sensor ID with "no data"
+            // No datastream link — show default cursor and sensor ID with "no data"
             mapRef.value.map.getTargetElement().style.cursor = "default";
             tooltipContent.value = `${sensorId}: ${t("sensor.noData")}`;
         }
@@ -299,10 +340,11 @@ function handleMapClick(event) {
         }
 
         // Multiple sensors — show picker popup (dialog fetches its own data)
+        // Note: hasData is always true now since observations are loaded lazily
         sensorPickerItems.value = clickableSensors.map(f => ({
             id: f.get("id") || t("sensor.unknown"),
             name: f.get("name") || "",
-            hasData: hasObservationData(f),
+            hasData: true,  // Observations loaded lazily, assume available
             datastreamSelfLink: f.get("datastreamSelfLink"),
             selfLink: f.get("selfLink"),
         }));
@@ -311,9 +353,13 @@ function handleMapClick(event) {
         return;
     }
 
-    // Single sensor — open dialog only if it has observation data
+    // Single sensor — open dialog if it has a datastream link
+    // Note: We no longer check hasObservationData since observations are loaded lazily for performance
     const feature = subFeatures[0];
-    if (!feature.get("datastreamSelfLink") || !hasObservationData(feature)) return;
+    if (!feature.get("datastreamSelfLink")) {
+        console.warn("[handleMapClick] Sensor has no datastreamSelfLink:", feature.get("id"));
+        return;
+    }
 
     openSensorDialog(feature);
 }
@@ -350,10 +396,17 @@ async function loadSensors() {
 
     try {
         const features = await sensorThingsApi.getAllThings(metric, {
-            // Step 1 done — show markers immediately (no colors yet)
-            onProgress: (earlyFeatures) => {
+            // Progressive loading callback:
+            // - First call (~1 sec): isPartial=true, ~600 sensors shown
+            // - Second call (~8 sec): isPartial=false, all sensors shown
+            onProgress: (earlyFeatures, isPartial) => {
                 if (requestId !== fetchAbortFlag) return;
                 allSensorFeatures.value = new FeatureCollection(earlyFeatures);
+                
+                // Keep loading indicator until full data is loaded
+                if (!isPartial) {
+                    currentMetric = metric;
+                }
             },
         });
 
@@ -391,6 +444,88 @@ function zoomOut() {
     const view = mapRef.value.map.getView();
     const zoom = view.getZoom();
     view.animate({ zoom: zoom - 1, duration: 250 });
+}
+
+/**
+ * Geolocate user, zoom to position, find & open nearest sensor.
+ */
+function locateUser() {
+    if (isLocating.value) return;
+    isLocating.value = true;
+
+    if (!navigator.geolocation) {
+        console.warn("[Geolocation] Not supported");
+        isLocating.value = false;
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            const lon = pos.coords.longitude;
+            const lat = pos.coords.latitude;
+            const userCoord = fromLonLat([lon, lat]);
+
+            // Place user marker
+            const marker = new Feature({ geometry: new Point(userCoord) });
+            marker.setStyle(new Style({
+                image: new Circle({
+                    radius: 8,
+                    fill: new Fill({ color: "#4285F4" }),
+                    stroke: new Stroke({ color: "#fff", width: 2.5 }),
+                }),
+            }));
+            userLocationFeatures.value = [marker];
+
+            // Animate map to user location
+            const view = mapRef.value.map.getView();
+            view.animate({ center: userCoord, zoom: 13, duration: 800 });
+
+            // Find nearest active sensor (fallback to nearest overall)
+            const features = allSensorFeatures.value.all();
+            if (features.length > 0) {
+                let nearestActive = null;
+                let minActiveDist = Infinity;
+                let nearestAny = null;
+                let minAnyDist = Infinity;
+                const userLonLat = [lon, lat];
+
+                for (const f of features) {
+                    const geom = f.getGeometry();
+                    if (!geom) continue;
+                    const coord = geom.getCoordinates();
+                    // OL features are in EPSG:3857, convert to lonlat for distance calc
+                    const fLonLat = [
+                        (coord[0] * 180) / 20037508.34,
+                        (Math.atan(Math.exp((coord[1] * Math.PI) / 20037508.34)) * 360) / Math.PI - 90,
+                    ];
+                    const dist = getDistance(userLonLat, fLonLat);
+
+                    if (dist < minAnyDist) {
+                        minAnyDist = dist;
+                        nearestAny = f;
+                    }
+                    // Prefer sensors with active recent measurements
+                    if (f.get("isActive") && f.get("lastObservationResult") !== null && dist < minActiveDist) {
+                        minActiveDist = dist;
+                        nearestActive = f;
+                    }
+                }
+
+                const best = nearestActive || nearestAny;
+                if (best && best.get("datastreamSelfLink")) {
+                    // Auto-open nearest sensor dialog after short delay (let map animate first)
+                    setTimeout(() => openSensorDialog(best), 1000);
+                }
+            }
+
+            isLocating.value = false;
+        },
+        (err) => {
+            console.warn("[Geolocation] Error:", err.message);
+            isLocating.value = false;
+        },
+        { enableHighAccuracy: true, timeout: 10000 },
+    );
 }
 
 watch(sensorMetric, () => {
@@ -431,6 +566,33 @@ watch(() => alertStore.selectedAlert, (alert) => {
 
 onMounted(() => {
     loadSensors();
+    
+    // DEBUG: Expose function to check sensor data from browser console
+    // Usage: window.debugSensor('KTUY_8046')
+    window.debugSensor = (sensorId) => {
+        const features = allSensorFeatures.value.all();
+        const matches = features.filter(f => f.get('id') === sensorId);
+        if (matches.length === 0) {
+            console.log(`Sensor ${sensorId} not found in current features`);
+            return null;
+        }
+        const f = matches[0];
+        const data = {
+            id: f.get('id'),
+            name: f.get('name'),
+            isActive: f.get('isActive'),
+            lastObservationResult: f.get('lastObservationResult'),
+            datastreamId: f.get('datastreamId'),
+            selfLink: f.get('selfLink'),
+        };
+        console.log(`Sensor ${sensorId}:`, data);
+        console.log(`Expected color: ${
+            data.lastObservationResult === null ? 'BLACK (no data)' :
+            !data.isActive ? 'GRAY (inactive)' :
+            'COLORED (' + getScaleColor(data.lastObservationResult) + ')'
+        }`);
+        return data;
+    };
 });
 
 onBeforeRouteLeave(() => {
@@ -500,6 +662,11 @@ onBeforeRouteLeave(() => {
                     </ol-source-cluster>
                     <ol-style :override-style-function="clusterStyle" />
                 </ol-vector-layer>
+
+                <!-- User location marker -->
+                <ol-vector-layer v-if="userLocationFeatures.length">
+                    <ol-source-vector :features="userLocationFeatures" />
+                </ol-vector-layer>
             </ol-map>
 
             <!-- Custom Zoom Controls -->
@@ -513,6 +680,12 @@ onBeforeRouteLeave(() => {
                     icon="mdi-minus"
                     class="gi-primary"
                     @click="zoomOut"
+                />
+                <GiBtn
+                    icon="mdi-crosshairs-gps"
+                    class="gi-primary"
+                    :loading="isLocating"
+                    @click="locateUser"
                 />
             </div>
 

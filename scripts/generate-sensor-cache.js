@@ -1,0 +1,789 @@
+#!/usr/bin/env node
+/**
+ * Generate static JSON cache files for sensor data.
+ * 
+ * This script fetches all sensors from the virtualair API and saves them
+ * as static JSON files in public/sensor-cache/. The frontend will load
+ * these for instant first paint, then refresh from live API in background.
+ * 
+ * Usage:
+ *   node scripts/generate-sensor-cache.js                             # All metrics (full scan)
+ *   node scripts/generate-sensor-cache.js airTemperature              # Single metric (full scan)
+ *   node scripts/generate-sensor-cache.js airTemperature --quick      # Incremental update (active sensors only)
+ *   node scripts/generate-sensor-cache.js airTemperature --sample=100 # 100 random sensors
+ *   node scripts/generate-sensor-cache.js airTemperature --debug      # Verbose logging
+ *   node scripts/generate-sensor-cache.js --update airTemperature     # Update ALL sensors in existing cache
+ *   node scripts/generate-sensor-cache.js --check=KTUY_8046           # Check single sensor's cache data
+ * 
+ * Quick Mode (--quick):
+ *   - Only re-checks sensors that were active or had data in the previous cache
+ *   - Preserves inactive sensors with no data from existing cache
+ *   - Reduces update time from ~5-6 min per metric to ~1-2 min
+ *   - Ideal for hourly updates; use full scan every 6 hours for new sensor discovery
+ * 
+ * Available metrics: airTemperature, relativeHumidity, atmosphericPressure, pm25, pm10, no2
+ * 
+ * Output:
+ *   public/sensor-cache/airTemperature.json
+ *   public/sensor-cache/relativeHumidity.json
+ *   public/sensor-cache/atmosphericPressure.json
+ *   public/sensor-cache/pm25.json
+ *   public/sensor-cache/pm10.json
+ *   public/sensor-cache/no2.json
+ */
+
+import { mkdir, writeFile, readFile } from 'fs/promises';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR = join(__dirname, '..', 'public', 'sensor-cache');
+
+const BASE_URL = 'https://api-virtualair.nilu.no/v1.1';
+
+// Same metric definitions as sensorDefinitions.js
+// NOTE: NO2 uses lowercase 'envthes' - the API is case-sensitive!
+const METRICS = {
+    airTemperature: 'http://vocabs.lter-europe.net/EnvThes/22035',
+    relativeHumidity: 'http://vocabs.lter-europe.net/EnvThes/21579',
+    atmosphericPressure: 'https://qudt.org/vocab/quantitykind/Pressure',
+    pm25: 'https://www.eea.europa.eu/help/glossary/eea-glossary/pm2.5',
+    pm10: 'https://www.eea.europa.eu/help/glossary/eea-glossary/pm10',
+    no2: 'https://vocabs.lter-europe.net/envthes/en/page/20842',  // lowercase 'envthes' - API is case-sensitive
+};
+
+/**
+ * Fetch ObservedProperties with chunked Datastreams pagination.
+ * The API limits Datastreams per request, so we need to fetch in chunks
+ * using $top/$skip on the Datastreams expand (same as frontend code).
+ * 
+ * Does NOT include Observations - active status is determined separately via:
+ * - fetchActiveThingIds() for FIJI sources (via /Observations endpoint)
+ * - fetchActiveNonFijiThingIds() for KTUY/SWNP/RIVM sources (individual datastream queries)
+ */
+async function fetchObservedProperties(metricLink) {
+    // Same chunk config as frontend for consistency
+    const CHUNK_CONFIG = [
+        { top: 200, skip: 0 },
+        { top: 2000, skip: 200 },
+        { top: 2000, skip: 2200 },
+        { top: 2000, skip: 4200 },
+        { top: 2000, skip: 6200 },
+    ];
+    
+    // Fetch all chunks in parallel
+    const chunkPromises = CHUNK_CONFIG.map(async ({ top, skip }) => {
+        // NO Observations expand - active status determined separately
+        // This avoids timeouts on large metrics
+        const expandParams = `Datastreams($top=${top};$skip=${skip}),Datastreams/Thing/Locations`;
+        const params = new URLSearchParams({
+            $filter: `definition eq '${metricLink}'`,
+            $expand: expandParams,
+            $top: '1000',
+        });
+        
+        let allProps = [];
+        let nextUrl = `${BASE_URL}/ObservedProperties?${params}`;
+        
+        while (nextUrl) {
+            console.log(`  [skip=${skip}] Fetching: ${nextUrl.substring(0, 80)}...`);
+            
+            const response = await fetch(nextUrl, {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                signal: AbortSignal.timeout(180000), // 3 minute timeout per request
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.value) {
+                allProps = allProps.concat(data.value);
+            }
+            
+            nextUrl = data['@iot.nextLink'] || null;
+        }
+        
+        return allProps;
+    });
+    
+    console.log(`  Fetching ${CHUNK_CONFIG.length} chunks in parallel...`);
+    const allChunks = await Promise.all(chunkPromises);
+    
+    // Merge all chunks - combine Datastreams for same ObservedProperty
+    const merged = new Map();
+    
+    for (const chunk of allChunks) {
+        for (const op of chunk) {
+            const id = op['@iot.id'];
+            if (merged.has(id)) {
+                // Add new datastreams to existing
+                const existing = merged.get(id);
+                existing.Datastreams.push(...(op.Datastreams || []));
+            } else {
+                merged.set(id, { ...op, Datastreams: [...(op.Datastreams || [])] });
+            }
+        }
+    }
+    
+    const result = Array.from(merged.values());
+    
+    // Count total datastreams
+    let totalDs = 0;
+    for (const op of result) {
+        totalDs += (op.Datastreams || []).length;
+    }
+    console.log(`  Merged: ${result.length} ObservedProperties, ${totalDs} total Datastreams`);
+    
+    return result;
+}
+
+/**
+ * Fetch Thing IDs that have observations in the last N days.
+ * This queries the Observations endpoint directly with a time filter,
+ * which is much faster than nested $expand with $orderby.
+ * 
+ * Returns a Map of thingId -> { isActive, lastObservationResult, phenomenonTime }
+ * 
+ * Note: The virtualair API has a bug where @iot.nextLink skips too many records,
+ * so we manually paginate using $skip instead.
+ */
+
+async function fetchActiveThingData(metricLink, daysBack = 5) {
+    const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+    const cutoffISO = cutoffDate.toISOString();
+    
+    console.log(`  Fetching active sensors with values (observations since ${cutoffISO.split('T')[0]})...`);
+    
+    // Map: thingId -> { result, phenomenonTime }
+    const thingObservations = new Map();
+    let totalObservations = 0;
+    let skip = 0;
+    const pageSize = 1000;
+    const maxPages = 50;
+    
+    for (let page = 0; page < maxPages; page++) {
+        try {
+            const params = new URLSearchParams({
+                // Filter: recent time, correct metric, AND valid result (not null and not -99)
+                $filter: `phenomenonTime gt ${cutoffISO} and Datastream/ObservedProperty/definition eq '${metricLink}' and result ne null`,
+                $expand: 'Datastream($select=@iot.id;$expand=Thing($select=@iot.id))',
+                $select: 'phenomenonTime,result',
+                $top: String(pageSize),
+                $skip: String(skip),
+            });
+            
+            const url = `${BASE_URL}/Observations?${params}`;
+            const response = await fetch(url, {
+                headers: { 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(60000),
+            });
+            
+            if (!response.ok) {
+                console.log(`  Warning: Observations query returned ${response.status}, stopping`);
+                break;
+            }
+            
+            const data = await response.json();
+            const items = data.value || [];
+            
+            if (items.length === 0) {
+                break;
+            }
+            
+            for (const obs of items) {
+                const thingId = obs.Datastream?.Thing?.['@iot.id'];
+                // Skip -99 sentinel values (means "no data")
+                if (thingId && obs.result !== -99) {
+                    const existing = thingObservations.get(thingId);
+                    const obsTime = new Date(obs.phenomenonTime);
+                    
+                    // Keep the most recent observation for each thing
+                    if (!existing || obsTime > new Date(existing.phenomenonTime)) {
+                        thingObservations.set(thingId, {
+                            result: obs.result,
+                            phenomenonTime: obs.phenomenonTime,
+                            isActive: true,  // Already filtered by time, so active
+                        });
+                    }
+                }
+            }
+            
+            totalObservations += items.length;
+            skip += items.length;
+            
+        } catch (error) {
+            console.log(`  Warning: Error on page ${page + 1}: ${error.message}`);
+            break;
+        }
+    }
+    
+    console.log(`  Found ${thingObservations.size} active sensors with values from ${totalObservations} observations (FIJI sources)`);
+    return thingObservations;
+}
+
+/**
+ * Check ALL non-FIJI datastreams (KTUY, SWNP, RIVM, KNJV, FIJI) for observations.
+ * 
+ * The federated API doesn't support for these sources:
+ * - $expand=Observations (returns null)
+ * - $filter=phenomenonTime on Observations (returns 0)
+ * 
+ * We must check each datastream individually for accuracy.
+ * Returns a Map of thingId -> { result, phenomenonTime, isActive }
+ * - isActive: true if observation is within daysBack
+ * - result/phenomenonTime: latest observation (even if old) for gray display
+ */
+async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode = false) {
+    if (datastreams.length === 0) {
+        return new Map();
+    }
+    
+    const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+    const BATCH_SIZE = 50;  // Reduced to 50 for better reliability with retries
+    
+    console.log(`  Checking ALL ${datastreams.length} non-FIJI datastreams for recent data...`);
+    
+    // Map: thingId -> { result, phenomenonTime, isActive }
+    const thingObservations = new Map();
+    let checked = 0;
+    let active = 0;
+    
+    for (let i = 0; i < datastreams.length; i += BATCH_SIZE) {
+        const batch = datastreams.slice(i, i + BATCH_SIZE);
+        
+        const results = await Promise.all(batch.map(async ({ dsId, thingId }) => {
+            // Retry up to 3 times for failed requests
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    // Fetch 200 most recent observations (desc order) to find the latest valid one
+                    // Some sensors have many null readings before valid data
+                    const url = `${BASE_URL}/Datastreams('${dsId}')/Observations?$top=200&$orderby=phenomenonTime%20desc&$select=phenomenonTime,result`;
+                    if (debugMode) console.log(`\n[DEBUG ${dsId}] Attempt ${attempt}: ${url}`);
+                    const res = await fetch(url, { 
+                        signal: AbortSignal.timeout(20000),  // 20s timeout for reliability
+                        headers: { 'Accept': 'application/json' },
+                    });
+                    if (debugMode) console.log(`[DEBUG ${dsId}] Response status: ${res.status}`);
+                    const data = await res.json();
+                    if (debugMode) console.log(`[DEBUG ${dsId}] Raw observations count: ${(data.value || []).length}`);
+                    let observations = data.value || [];
+                
+                    // Filter out invalid values
+                    observations = observations.filter(obs => 
+                        obs.result !== null && obs.result !== undefined && obs.result !== -99
+                    );
+                    if (debugMode) console.log(`[DEBUG ${dsId}] Valid observations after filter: ${observations.length}`);
+                
+                    if (observations.length === 0) {
+                        // RIVM fallback: virtualair proxy sometimes returns empty for KTUY
+                        // datastreams that have data at the RIVM source. Try direct RIVM query.
+                        if (dsId.startsWith('KTUY_')) {
+                            const numericId = dsId.replace('KTUY_', '');
+                            const rivmUrl = `https://api-samenmeten.rivm.nl/v1.0/Datastreams(${numericId})/Observations?$top=5&$orderby=phenomenonTime%20desc&$select=phenomenonTime,result`;
+                            if (debugMode) console.log(`[DEBUG ${dsId}] Virtualair empty, trying RIVM fallback: ${rivmUrl}`);
+                            try {
+                                const rivmRes = await fetch(rivmUrl, {
+                                    signal: AbortSignal.timeout(15000),
+                                    headers: { 'Accept': 'application/json' },
+                                });
+                                if (rivmRes.ok) {
+                                    const rivmData = await rivmRes.json();
+                                    observations = (rivmData.value || []).filter(obs =>
+                                        obs.result !== null && obs.result !== undefined && obs.result !== -99
+                                    );
+                                    if (debugMode) console.log(`[DEBUG ${dsId}] RIVM fallback returned ${observations.length} valid observations`);
+                                }
+                            } catch (rivmErr) {
+                                if (debugMode) console.log(`[DEBUG ${dsId}] RIVM fallback error: ${rivmErr.message}`);
+                            }
+                        }
+                    }
+
+                    if (observations.length === 0) {
+                        if (debugMode) console.log(`[DEBUG ${dsId}] No valid observations, returning null`);
+                        return { thingId, data: null };
+                    }
+                
+                    // Find the most recent observation (already sorted desc, but verify)
+                    const latestObs = observations.reduce((latest, obs) => {
+                        if (!latest) return obs;
+                        return new Date(obs.phenomenonTime) > new Date(latest.phenomenonTime) ? obs : latest;
+                }, null);
+                
+                if (!latestObs) {
+                    if (debugMode) console.log(`[DEBUG ${dsId}] latestObs is null, returning null`);
+                    return { thingId, data: null };
+                }
+                
+                const obsDate = new Date(latestObs.phenomenonTime);
+                const isActive = obsDate >= cutoffDate;
+                
+                if (debugMode) console.log(`[DEBUG ${dsId}] SUCCESS! result=${latestObs.result}, time=${latestObs.phenomenonTime}, isActive=${isActive}`);
+                
+                // Always return the latest observation (for gray display of old sensors)
+                return { 
+                    thingId, 
+                    data: { 
+                        result: latestObs.result, 
+                        phenomenonTime: latestObs.phenomenonTime,
+                        isActive,
+                    } 
+                };
+            } catch (e) {
+                if (debugMode) console.log(`[DEBUG ${dsId}] ERROR on attempt ${attempt}: ${e.message}`);
+                // Retry on failure (except on last attempt)
+                if (attempt < 3) {
+                    // Wait before retry (exponential backoff)
+                    await new Promise(r => setTimeout(r, attempt * 1000));
+                    continue;
+                }
+                // Final attempt failed
+                return { thingId, data: null };
+            }
+            }
+            // Should not reach here
+            return { thingId, data: null };
+        }));
+        
+        for (const { thingId, data } of results) {
+            if (data) {
+                const existing = thingObservations.get(thingId);
+                // Keep the most recent observation per thing
+                if (!existing || new Date(data.phenomenonTime) > new Date(existing.phenomenonTime)) {
+                    thingObservations.set(thingId, data);
+                }
+                active++;
+            }
+        }
+        
+        checked += batch.length;
+        const pct = ((checked / datastreams.length) * 100).toFixed(1);
+        process.stdout.write(`\r  Checked ${checked}/${datastreams.length} (${pct}%) - ${active} active so far...`);
+    }
+    
+    console.log(`\n  Found ${thingObservations.size} active non-FIJI sensors with values`);
+    return thingObservations;
+}
+
+/**
+ * Minimize the data to only what's needed for map display.
+ * This reduces file size significantly.
+ * 
+ * Uses thingObservations Map (thingId -> { result, phenomenonTime, isActive }) which combines:
+ * 1. FIJI sensors from /Observations endpoint query (always active if present)
+ * 2. KTUY/SWNP/RIVM/KNJV/FIJI sensors from individual datastream checks (isActive flag varies)
+ * 
+ * Color logic in frontend:
+ * - Black: lastObservationResult is null (no data ever)
+ * - Gray: lastObservationResult exists but isActive is false (old data)
+ * - Colored: lastObservationResult exists and isActive is true (recent data)
+ */
+function minimizeData(observedProperties, thingObservations) {
+    return observedProperties.map(op => ({
+        '@iot.id': op['@iot.id'],
+        Datastreams: (op.Datastreams || []).map(ds => {
+            const thingId = ds.Thing?.['@iot.id'];
+            const obsData = thingId ? thingObservations.get(thingId) : null;
+            
+            // Use isActive from obsData if available, otherwise false if no data
+            const isActive = obsData?.isActive ?? false;
+            const lastObservationResult = obsData?.result ?? null;
+            
+            return {
+                '@iot.id': ds['@iot.id'],
+                '@iot.selfLink': ds['@iot.selfLink'],
+                isActive,
+                lastObservationResult,  // For color scale on first load
+                Thing: ds.Thing ? {
+                    '@iot.id': ds.Thing['@iot.id'],
+                    name: ds.Thing.name,
+                    description: ds.Thing.description,
+                    Locations: (ds.Thing.Locations || []).map(loc => ({
+                        location: loc.location,
+                    })),
+                } : null,
+            };
+        }),
+    }));
+}
+
+async function main() {
+    console.log('=== Generating Sensor Cache Files ===\n');
+    
+    // Support single metric and test mode via CLI arguments:
+    // node generate-sensor-cache.js airTemperature                    # Single metric (full)
+    // node generate-sensor-cache.js airTemperature --sample=100       # 100 random sensors
+    // node generate-sensor-cache.js airTemperature --test             # Same as --sample=50
+    // node generate-sensor-cache.js airTemperature --debug            # Verbose logging
+    // node generate-sensor-cache.js --check=KTUY_8046                 # Check single sensor
+    // node generate-sensor-cache.js --quick                           # Quick mode: only active sensors (~5-10 min)
+    const args = process.argv.slice(2);
+    const testMode = args.includes('--test');
+    const debugMode = args.includes('--debug');
+    const quickMode = args.includes('--quick');  // NEW: Quick incremental update
+    const sampleArg = args.find(a => a.startsWith('--sample='));
+    const sampleSize = sampleArg ? parseInt(sampleArg.split('=')[1], 10) : (testMode ? 50 : 0);
+    const checkArg = args.find(a => a.startsWith('--check='));
+    const singleMetric = args.find(a => !a.startsWith('--'));
+    
+    // Quick sensor check mode - show cache data for a specific sensor
+    if (checkArg) {
+        const sensorId = checkArg.split('=')[1];
+        console.log(`=== Checking sensor: ${sensorId} ===\n`);
+        
+        for (const [metric, _link] of Object.entries(METRICS)) {
+            const cacheFile = join(OUTPUT_DIR, `${metric}.json`);
+            try {
+                const cacheData = JSON.parse(await readFile(cacheFile, 'utf8'));
+                for (const op of cacheData.data || []) {
+                    for (const ds of op.Datastreams || []) {
+                        if (ds.Thing?.['@iot.id'] === sensorId || ds['@iot.id'] === sensorId) {
+                            console.log(`[${metric}] Found in cache:`);
+                            console.log(`  Datastream: ${ds['@iot.id']}`);
+                            console.log(`  Thing ID: ${ds.Thing?.['@iot.id']}`);
+                            console.log(`  isActive: ${ds.isActive}`);
+                            console.log(`  lastObservationResult: ${ds.lastObservationResult}`);
+                            console.log(`  Location: ${JSON.stringify(ds.Thing?.Locations?.[0]?.location?.coordinates)}`);
+                            
+                            // Also fetch LIVE data from API for comparison
+                            console.log(`\n  Fetching LIVE data from API...`);
+                            try {
+                                const url = `${BASE_URL}/Datastreams('${ds['@iot.id']}')/Observations?$top=5&$orderby=phenomenonTime%20desc&$select=phenomenonTime,result`;
+                                const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+                                const data = await res.json();
+                                const obs = (data.value || []).filter(o => o.result !== null && o.result !== -99);
+                                if (obs.length > 0) {
+                                    console.log(`  LIVE latest: result=${obs[0].result}, time=${obs[0].phenomenonTime}`);
+                                } else {
+                                    console.log(`  LIVE: No valid observations`);
+                                }
+                            } catch (e) {
+                                console.log(`  LIVE: Error fetching - ${e.message}`);
+                            }
+                            console.log();
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log(`[${metric}] Cache not found: ${cacheFile}`);
+            }
+        }
+        return;
+    }
+    
+    if (singleMetric && !METRICS[singleMetric]) {
+        console.error(`Unknown metric: ${singleMetric}`);
+        console.error(`Available: ${Object.keys(METRICS).join(', ')}`);
+        process.exit(1);
+    }
+    
+    if (sampleSize > 0) {
+        console.log(`*** SAMPLE MODE: Processing only ${sampleSize} datastreams ***\n`);
+    }
+    if (debugMode) {
+        console.log('*** DEBUG MODE: Verbose logging enabled ***\n');
+    }
+    if (quickMode) {
+        console.log('*** QUICK MODE: Only updating active sensors (incremental) ***\n');
+    }
+    
+    // Create output directory
+    await mkdir(OUTPUT_DIR, { recursive: true });
+    console.log(`Output directory: ${OUTPUT_DIR}\n`);
+    
+    const results = {};
+    const metricsToProcess = singleMetric 
+        ? [[singleMetric, METRICS[singleMetric]]]
+        : Object.entries(METRICS);
+    
+    for (const [metric, link] of metricsToProcess) {
+        console.log(`\n[${metric}] Fetching from ${link}`);
+        
+        try {
+            const startTime = Date.now();
+            
+            // QUICK MODE: Load existing cache and only update active sensors
+            let existingCache = null;
+            let existingDataMap = new Map();  // dsId -> datastream data
+            const cacheFile = join(OUTPUT_DIR, `${metric}.json`);
+            
+            if (quickMode) {
+                try {
+                    existingCache = JSON.parse(await readFile(cacheFile, 'utf8'));
+                    console.log(`  [QUICK] Loaded existing cache: ${existingCache.sensorCount} sensors, ${existingCache.activeSensorCount} active`);
+                    
+                    // Build a map of existing datastream data for fast lookup
+                    for (const op of existingCache.data || []) {
+                        for (const ds of op.Datastreams || []) {
+                            existingDataMap.set(ds['@iot.id'], ds);
+                        }
+                    }
+                } catch (e) {
+                    console.log(`  [QUICK] No existing cache found, falling back to full scan`);
+                }
+            }
+            
+            // Step 1: Fetch all sensors (with observations for non-KTUY sources)
+            const data = await fetchObservedProperties(link);
+            
+            // Step 2: Fetch active sensor data with observation values from /Observations endpoint (works for FIJI)
+            const thingObservations = await fetchActiveThingData(link, 5);
+            
+            // Step 3: Collect non-FIJI datastream info (need separate queries)
+            // KTUY, SWNP, RIVM, KNJV sources don't support $expand=Observations or $filter=phenomenonTime
+            // These federated sources need individual datastream queries to check for recent data
+            let nonFijiDatastreams = [];
+            const NON_FIJI_PREFIXES = ['KTUY_', 'SWNP_', 'RIVM_', 'KNJV_'];
+            
+            // QUICK MODE: Only re-check sensors that were previously active or recently had data
+            const THIRTY_DAYS_AGO = 30 * 24 * 60 * 60 * 1000;
+            let skippedInactive = 0;
+            
+            for (const op of data) {
+                for (const ds of op.Datastreams || []) {
+                    const dsId = ds['@iot.id']?.toString() || '';
+                    const thingId = ds.Thing?.['@iot.id'];
+                    if (thingId && NON_FIJI_PREFIXES.some(prefix => dsId.startsWith(prefix))) {
+                        // In QUICK MODE: Skip sensors that were inactive AND had old/no data
+                        if (quickMode && existingDataMap.size > 0) {
+                            const existingDs = existingDataMap.get(dsId);
+                            if (existingDs) {
+                                // Skip if: was inactive AND (no data OR data older than 30 days)
+                                const wasActive = existingDs.isActive === true;
+                                const hasRecentData = existingDs.lastObservationResult !== null;
+                                
+                                if (!wasActive && !hasRecentData) {
+                                    // No data at all - skip (check in full scan)
+                                    skippedInactive++;
+                                    continue;
+                                }
+                            }
+                        }
+                        nonFijiDatastreams.push({ dsId, thingId });
+                    }
+                }
+            }
+            
+            if (quickMode && skippedInactive > 0) {
+                console.log(`  [QUICK] Skipped ${skippedInactive} sensors with no data (will check in full scan)`);
+                console.log(`  [QUICK] Checking ${nonFijiDatastreams.length} sensors (active + with data)`);
+            }
+            
+            // SAMPLE MODE: Limit to N random datastreams for faster testing
+            if (sampleSize > 0 && nonFijiDatastreams.length > sampleSize) {
+                // Shuffle and take first N for random sampling
+                nonFijiDatastreams = nonFijiDatastreams
+                    .sort(() => Math.random() - 0.5)
+                    .slice(0, sampleSize);
+                console.log(`  [SAMPLE MODE] Processing ${nonFijiDatastreams.length} randomly selected datastreams`);
+            }
+            
+            // Step 4: Batch check non-FIJI datastreams for recent observations with values
+            const nonFijiThingData = await fetchActiveNonFijiThingData(nonFijiDatastreams, 5, debugMode);
+            
+            // Merge observation data from both sources (keep most recent per thing)
+            for (const [thingId, obsData] of nonFijiThingData) {
+                const existing = thingObservations.get(thingId);
+                if (!existing || new Date(obsData.phenomenonTime) > new Date(existing.phenomenonTime)) {
+                    thingObservations.set(thingId, obsData);
+                }
+            }
+            
+            const fetchTime = Date.now() - startTime;
+            
+            // Minimize data and add isActive flag + lastObservationResult
+            let minimized = minimizeData(data, thingObservations);
+            
+            // QUICK MODE: Merge with existing cache data for sensors that weren't re-checked
+            if (quickMode && existingCache?.data) {
+                console.log(`  Quick mode: Merging with existing cache data...`);
+                
+                // Build a map of updated sensor IDs from the new data
+                const updatedThingIds = new Set();
+                for (const op of minimized) {
+                    for (const ds of op.Datastreams || []) {
+                        if (ds.Thing?.['@iot.id']) {
+                            updatedThingIds.add(ds.Thing['@iot.id']);
+                        }
+                    }
+                }
+                
+                // Add sensors from existing cache that weren't updated
+                for (const op of existingCache.data) {
+                    for (const ds of op.Datastreams || []) {
+                        const thingId = ds.Thing?.['@iot.id'];
+                        if (thingId && !updatedThingIds.has(thingId)) {
+                            // Find or create matching ObservedProperty in minimized
+                            let targetOp = minimized.find(m => m['@iot.id'] === op['@iot.id']);
+                            if (!targetOp) {
+                                targetOp = { '@iot.id': op['@iot.id'], name: op.name, Datastreams: [] };
+                                minimized.push(targetOp);
+                            }
+                            targetOp.Datastreams.push(ds);
+                        }
+                    }
+                }
+                console.log(`  ✓ Merged: ${updatedThingIds.size} updated, ${existingCache.sensorCount - updatedThingIds.size} preserved from cache`);
+            }
+            
+            // Count unique sensors and active sensors
+            const thingIds = new Set();
+            let activeCount = 0;
+            for (const op of minimized) {
+                for (const ds of op.Datastreams || []) {
+                    if (ds.Thing?.['@iot.id']) {
+                        thingIds.add(ds.Thing['@iot.id']);
+                        if (ds.isActive) activeCount++;
+                    }
+                }
+            }
+            
+            // Generate cache version for cache-busting (timestamp-based)
+            const cacheVersion = Date.now().toString(36);
+            
+            const output = {
+                generatedAt: new Date().toISOString(),
+                cacheVersion,  // For cache-busting in frontend
+                updateType: quickMode ? 'incremental' : 'full',  // Track update type
+                ...(quickMode && existingCache?.generatedAt ? { baseFullScan: existingCache.generatedAt } : {}),
+                metric,
+                metricLink: link,
+                sensorCount: thingIds.size,
+                activeSensorCount: activeCount,
+                data: minimized,
+            };
+            
+            const outputPath = join(OUTPUT_DIR, `${metric}.json`);
+            const jsonString = JSON.stringify(output);
+            await writeFile(outputPath, jsonString, 'utf-8');
+            
+            const fileSizeKB = Math.round(jsonString.length / 1024);
+            console.log(`  ✓ Saved ${thingIds.size} sensors (${activeCount} active) (${fileSizeKB} KB) in ${fetchTime}ms`);
+            
+            results[metric] = {
+                sensors: thingIds.size,
+                active: activeCount,
+                sizeKB: fileSizeKB,
+                fetchTimeMs: fetchTime,
+            };
+        } catch (error) {
+            console.error(`  ✗ Error: ${error.message}`);
+            results[metric] = { error: error.message };
+        }
+    }
+    
+    console.log('\n=== Summary ===');
+    console.table(results);
+    console.log('\nDone! Static JSON files generated in public/sensor-cache/');
+}
+
+/**
+ * Update mode: Fetch observation data for sensors that are missing lastObservationResult
+ * in an existing cache file. Much faster than full regeneration.
+ */
+async function updateMode(metric, debugMode) {
+    console.log(`\n=== UPDATE MODE: ${metric} ===\n`);
+    
+    const inputPath = join(OUTPUT_DIR, `${metric}.json`);
+    
+    // Load existing cache
+    let existingData;
+    try {
+        const content = await readFile(inputPath, 'utf-8');
+        existingData = JSON.parse(content);
+        console.log(`Loaded existing cache: ${existingData.sensorCount} sensors`);
+    } catch (e) {
+        console.error(`Error loading cache file: ${e.message}`);
+        console.error(`Run without --update to generate a new cache file.`);
+        process.exit(1);
+    }
+    
+    // Collect datastreams that need observation data
+    const datastreamsToUpdate = [];
+    const NON_FIJI_PREFIXES = ['KTUY_', 'SWNP_', 'RIVM_', 'KNJV_'];
+    
+    for (const op of existingData.data) {
+        for (const ds of op.Datastreams || []) {
+            const dsId = ds['@iot.id']?.toString() || '';
+            const thingId = ds.Thing?.['@iot.id'];
+            
+            // Only update non-FIJI sensors that have no observation data
+            if (thingId && 
+                ds.lastObservationResult === null && 
+                NON_FIJI_PREFIXES.some(prefix => dsId.startsWith(prefix))) {
+                datastreamsToUpdate.push({ dsId, thingId });
+            }
+        }
+    }
+    
+    console.log(`Found ${datastreamsToUpdate.length} sensors without observation data`);
+    
+    if (datastreamsToUpdate.length === 0) {
+        console.log('Nothing to update!');
+        return;
+    }
+    
+    // Fetch observation data
+    const startTime = Date.now();
+    const thingObservations = await fetchActiveNonFijiThingData(datastreamsToUpdate, 5, debugMode);
+    
+    const fetchTime = Date.now() - startTime;
+    
+    console.log(`\nFetched observations for ${thingObservations.size} sensors in ${fetchTime}ms`);
+    
+    // Update the cache data
+    let updated = 0;
+    for (const op of existingData.data) {
+        for (const ds of op.Datastreams || []) {
+            const thingId = ds.Thing?.['@iot.id'];
+            if (thingId && thingObservations.has(thingId)) {
+                const obsData = thingObservations.get(thingId);
+                ds.isActive = obsData.isActive;
+                ds.lastObservationResult = obsData.result;
+                updated++;
+            }
+        }
+    }
+    
+    // Update metadata
+    existingData.generatedAt = new Date().toISOString();
+    let newActiveCount = 0;
+    for (const op of existingData.data) {
+        for (const ds of op.Datastreams || []) {
+            if (ds.isActive) newActiveCount++;
+        }
+    }
+    existingData.activeSensorCount = newActiveCount;
+    
+    // Save updated cache
+    const jsonString = JSON.stringify(existingData);
+    await writeFile(inputPath, jsonString, 'utf-8');
+    
+    const fileSizeKB = Math.round(jsonString.length / 1024);
+    console.log(`\n✓ Updated ${updated} sensors (${newActiveCount} active) (${fileSizeKB} KB)`);
+}
+
+async function run() {
+    const args = process.argv.slice(2);
+    const updateModeFlag = args.includes('--update');
+    const debugMode = args.includes('--debug');
+    const singleMetric = args.find(a => !a.startsWith('--'));
+    
+    if (updateModeFlag) {
+        if (!singleMetric) {
+            console.error('--update requires a metric name');
+            console.error('Usage: node generate-sensor-cache.js --update airTemperature');
+            process.exit(1);
+        }
+        await updateMode(singleMetric, debugMode);
+    } else {
+        await main();
+    }
+}
+
+run().catch(console.error);
