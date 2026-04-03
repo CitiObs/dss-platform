@@ -5,7 +5,7 @@ import { FeatureCollection, GiBtn, Scale, createScaleItem, GiScale } from "@geoi
 import { useSensorThingsApi } from "@/composables/api/useSensorThingsApi";
 import { useAlertStore } from "@/stores/alertStore.js";
 import { useAuthStore } from "@/stores/authStore.js";
-import { SENSOR_DEFINITIONS } from "@/common/sensorDefinitions.js";
+import { SENSOR_DEFINITIONS, SENSOR_ICONS, computeCAQI } from "@/common/sensorDefinitions.js";
 import { STYLES_CONFIG } from "@/common/stylesConfig.js";
 import { Circle, Fill, Stroke, Style, Text } from "ol/style.js";
 import Feature from "ol/Feature.js";
@@ -53,6 +53,23 @@ const sensorPickerItems = ref([]);
 // Geolocation state
 const isLocating = ref(false);
 const userLocationFeatures = ref([]);
+const showLocationSnackbar = ref(false);
+const locationSnackbarText = ref("");
+const showWelcomeBanner = ref(!localStorage.getItem("citiobs_welcome_dismissed"));
+const showSummaryCard = ref(false);
+const summaryMetrics = ref([]);
+
+// Metrics to show in the mini-DSS summary card
+const SUMMARY_METRICS = ["pm25", "pm10", "no2", "airTemperature", "relativeHumidity", "atmosphericPressure"];
+
+function caqiLevel(score) {
+    if (score == null) return { label: "", color: "#888" };
+    if (score <= 25) return { label: t("sensor.caqiVeryLow"), color: "#50f0e6" };
+    if (score <= 50) return { label: t("sensor.caqiLow"), color: "#50ccaa" };
+    if (score <= 75) return { label: t("sensor.caqiMedium"), color: "#f0e641" };
+    if (score <= 100) return { label: t("sensor.caqiHigh"), color: "#ff5050" };
+    return { label: t("sensor.caqiVeryHigh"), color: "#960032" };
+}
 
 const occupiedHeight = STYLES_CONFIG.header_height + STYLES_CONFIG.footer_height;
 
@@ -344,7 +361,8 @@ function handleMapClick(event) {
         sensorPickerItems.value = clickableSensors.map(f => ({
             id: f.get("id") || t("sensor.unknown"),
             name: f.get("name") || "",
-            hasData: true,  // Observations loaded lazily, assume available
+            isActive: f.get("isActive"),
+            lastObservationResult: f.get("lastObservationResult"),
             datastreamSelfLink: f.get("datastreamSelfLink"),
             selfLink: f.get("selfLink"),
         }));
@@ -365,8 +383,20 @@ function handleMapClick(event) {
 }
 
 // --- Co-located sensor picker helpers (revertable) ---
+// For CAQI markers, switch to the underlying worst pollutant metric before opening dialog
+const dialogMetric = ref(sensorMetric.value);
+function resolveDialogMetric(feature) {
+    if (sensorMetric.value === "caqi") {
+        const wm = feature.get ? feature.get("worstMetric") : feature.worstMetric;
+        dialogMetric.value = wm || "pm25"; // fallback
+    } else {
+        dialogMetric.value = sensorMetric.value;
+    }
+}
+
 function openSensorDialog(feature) {
     showSensorPicker.value = false;
+    resolveDialogMetric(feature);
     apiCode.value = "SWNP";
     datastreamLink.value = feature.get ? feature.get("datastreamSelfLink") : feature.datastreamSelfLink;
     thingLink.value = feature.get ? feature.get("selfLink") : feature.selfLink;
@@ -375,6 +405,7 @@ function openSensorDialog(feature) {
 
 function onSensorPicked(sensor) {
     showSensorPicker.value = false;
+    resolveDialogMetric(sensor);
     apiCode.value = "SWNP";
     datastreamLink.value = sensor.datastreamSelfLink;
     thingLink.value = sensor.selfLink;
@@ -447,7 +478,130 @@ function zoomOut() {
 }
 
 /**
- * Geolocate user, zoom to position, find & open nearest sensor.
+ * Fetch all metric cache files and find nearest sensor per metric.
+ * Cache format: { data: [{ Datastreams: [{ Thing: { Locations: [{ location: { coordinates } }] }, ... }] }] }
+ */
+async function fetchNearbySummary(userLonLat) {
+    const results = [];
+    const fetches = SUMMARY_METRICS.map(async (metric) => {
+        try {
+            const res = await fetch(`/sensor-cache/${metric}.json`);
+            if (!res.ok) return;
+            const cacheData = await res.json();
+            if (!cacheData.data) return;
+
+            // Iterate SensorThings structure to find nearest Thing
+            let nearest = null;
+            let minDist = Infinity;
+            const seen = new Set();
+
+            for (const obsProp of cacheData.data) {
+                for (const ds of obsProp.Datastreams || []) {
+                    const thing = ds.Thing;
+                    if (!thing) continue;
+                    const thingId = thing["@iot.id"];
+                    if (seen.has(thingId)) continue;
+                    seen.add(thingId);
+
+                    const coords = thing.Locations?.[0]?.location?.coordinates;
+                    if (!coords || coords.length < 2) continue;
+                    if (coords[0] === 0 && coords[1] === 0) continue; // Null Island
+
+                    const dist = getDistance(userLonLat, [coords[0], coords[1]]);
+                    // Only consider sensors within 50 km and active (last 5 days)
+                    if (dist > 50_000) continue;
+                    if (ds.isActive !== true) continue;
+
+                    if (dist < minDist) {
+                        minDist = dist;
+                        const dsId = ds["@iot.id"];
+                        nearest = {
+                            id: thingId,
+                            distance: dist,
+                            isActive: true,
+                            lastObservationResult: ds.lastObservationResult ?? null,
+                            datastreamSelfLink: ds["@iot.selfLink"] || (dsId ? `https://api-virtualair.nilu.no/v1.1/Datastreams('${dsId}')` : null),
+                            selfLink: `https://api-virtualair.nilu.no/v1.1/Things('${thingId}')`,
+                        };
+                    }
+                }
+            }
+
+            if (nearest) {
+                const def = SENSOR_DEFINITIONS[metric];
+                results.push({
+                    metric,
+                    label: def?.label() || metric,
+                    unit: def?.unit || "",
+                    icon: SENSOR_ICONS[metric] || "mdi-help",
+                    sensorId: nearest.id,
+                    value: nearest.lastObservationResult,
+                    isActive: nearest.isActive,
+                    distanceKm: (nearest.distance / 1000).toFixed(1),
+                    datastreamSelfLink: nearest.datastreamSelfLink,
+                    selfLink: nearest.selfLink,
+                });
+            }
+        } catch (e) {
+            console.warn(`[Summary] Failed to fetch ${metric}:`, e.message);
+        }
+    });
+    await Promise.all(fetches);
+    // Keep original metric order — include all metrics, show "no data" for missing ones
+    const ordered = SUMMARY_METRICS.map(m => {
+        const found = results.find(r => r.metric === m);
+        if (found) return found;
+        // No data for this metric — add a placeholder row
+        const def = SENSOR_DEFINITIONS[m];
+        return {
+            metric: m,
+            label: def?.label() || m,
+            unit: def?.unit || "",
+            icon: SENSOR_ICONS[m] || "mdi-help",
+            sensorId: "",
+            value: null,
+            isActive: false,
+            distanceKm: "",
+            datastreamSelfLink: null,
+            selfLink: null,
+        };
+    });
+
+    // If no metric found an active sensor within 50 km, return empty
+    const hasAnyData = ordered.some(r => r.value !== null);
+    if (!hasAnyData) return [];
+
+    // Compute a CAQI composite row from the pollutant values
+    const pollutantValues = {};
+    for (const r of ordered) {
+        if (["pm25", "pm10", "no2"].includes(r.metric) && r.value !== null) {
+            pollutantValues[r.metric] = r.value;
+        }
+    }
+    const caqi = computeCAQI(pollutantValues);
+    if (caqi) {
+        const worstRow = ordered.find(r => r.metric === caqi.worstPollutant);
+        const def = SENSOR_DEFINITIONS.caqi;
+        ordered.unshift({
+            metric: "caqi",
+            label: def?.label() || "CAQI",
+            unit: "",
+            icon: SENSOR_ICONS.caqi,
+            sensorId: worstRow?.sensorId || "",
+            value: caqi.score,
+            isActive: true,
+            distanceKm: worstRow?.distanceKm || "",
+            datastreamSelfLink: worstRow?.datastreamSelfLink,
+            selfLink: worstRow?.selfLink,
+            _worstMetric: caqi.worstPollutant,
+        });
+    }
+
+    return ordered;
+}
+
+/**
+ * Geolocate user, zoom to position, show multi-metric summary.
  */
 function locateUser() {
     if (isLocating.value) return;
@@ -460,7 +614,7 @@ function locateUser() {
     }
 
     navigator.geolocation.getCurrentPosition(
-        (pos) => {
+        async (pos) => {
             const lon = pos.coords.longitude;
             const lat = pos.coords.latitude;
             const userCoord = fromLonLat([lon, lat]);
@@ -480,56 +634,56 @@ function locateUser() {
             const view = mapRef.value.map.getView();
             view.animate({ center: userCoord, zoom: 13, duration: 800 });
 
-            // Find nearest active sensor (fallback to nearest overall)
-            const features = allSensorFeatures.value.all();
-            if (features.length > 0) {
-                let nearestActive = null;
-                let minActiveDist = Infinity;
-                let nearestAny = null;
-                let minAnyDist = Infinity;
-                const userLonLat = [lon, lat];
-
-                for (const f of features) {
-                    const geom = f.getGeometry();
-                    if (!geom) continue;
-                    const coord = geom.getCoordinates();
-                    // OL features are in EPSG:3857, convert to lonlat for distance calc
-                    const fLonLat = [
-                        (coord[0] * 180) / 20037508.34,
-                        (Math.atan(Math.exp((coord[1] * Math.PI) / 20037508.34)) * 360) / Math.PI - 90,
-                    ];
-                    const dist = getDistance(userLonLat, fLonLat);
-
-                    if (dist < minAnyDist) {
-                        minAnyDist = dist;
-                        nearestAny = f;
-                    }
-                    // Prefer sensors with active recent measurements
-                    if (f.get("isActive") && f.get("lastObservationResult") !== null && dist < minActiveDist) {
-                        minActiveDist = dist;
-                        nearestActive = f;
-                    }
-                }
-
-                const best = nearestActive || nearestAny;
-                if (best && best.get("datastreamSelfLink")) {
-                    // Auto-open nearest sensor dialog after short delay (let map animate first)
-                    setTimeout(() => openSensorDialog(best), 1000);
-                }
+            // Fetch multi-metric summary from static cache files
+            const userLonLat = [lon, lat];
+            const summary = await fetchNearbySummary(userLonLat);
+            if (summary.length > 0) {
+                summaryMetrics.value = summary;
+                showSummaryCard.value = true;
+            } else {
+                locationSnackbarText.value = t("geolocation.noSensorsNearby");
+                showLocationSnackbar.value = true;
             }
 
             isLocating.value = false;
         },
         (err) => {
             console.warn("[Geolocation] Error:", err.message);
+            locationSnackbarText.value = t("geolocation.error");
+            showLocationSnackbar.value = true;
             isLocating.value = false;
         },
         { enableHighAccuracy: true, timeout: 10000 },
     );
 }
 
-watch(sensorMetric, () => {
+function dismissWelcomeBanner() {
+    showWelcomeBanner.value = false;
+    localStorage.setItem("citiobs_welcome_dismissed", "1");
+}
+
+function onWelcomeLocate() {
+    dismissWelcomeBanner();
+    locateUser();
+}
+
+function onSummaryMetricClick(item) {
+    showSummaryCard.value = false;
+    // For CAQI, open the worst pollutant's dialog
+    const openMetric = item.metric === "caqi" ? (item._worstMetric || "pm25") : item.metric;
+    sensorMetric.value = openMetric;
+    dialogMetric.value = openMetric;
+    if (item.datastreamSelfLink && item.selfLink) {
+        apiCode.value = "SWNP";
+        datastreamLink.value = item.datastreamSelfLink;
+        thingLink.value = item.selfLink;
+        isSensorOverviewDialog.value = true;
+    }
+}
+
+watch(sensorMetric, (m) => {
     currentMetric = null; // Force reload for new metric
+    if (m !== "caqi") dialogMetric.value = m;
     loadSensors();
 });
 
@@ -681,12 +835,18 @@ onBeforeRouteLeave(() => {
                     class="gi-primary"
                     @click="zoomOut"
                 />
-                <GiBtn
-                    icon="mdi-crosshairs-gps"
-                    class="gi-primary"
-                    :loading="isLocating"
-                    @click="locateUser"
-                />
+                <v-tooltip location="left">
+                    <template #activator="{ props: tp }">
+                        <GiBtn
+                            v-bind="tp"
+                            icon="mdi-crosshairs-gps"
+                            class="gi-primary"
+                            :loading="isLocating"
+                            @click="locateUser"
+                        />
+                    </template>
+                    {{ t("geolocation.findMe") }}
+                </v-tooltip>
             </div>
 
             <!-- Floating Tooltip for all sensors -->
@@ -700,6 +860,142 @@ onBeforeRouteLeave(() => {
             >
                 {{ tooltipContent }}
             </div>
+
+            <!-- Welcome / Onboarding Banner -->
+            <v-card
+                v-if="showWelcomeBanner"
+                class="welcome-banner rounded-lg elevation-6"
+                max-width="340"
+            >
+                <v-card-text class="pa-4">
+                    <div class="d-flex align-start">
+                        <v-icon
+                            color="primary"
+                            size="28"
+                            class="mr-3 mt-1"
+                        >
+                            mdi-map-marker-radius
+                        </v-icon>
+                        <div>
+                            <p class="text-subtitle-2 font-weight-bold mb-1">
+                                {{ t("geolocation.welcomeTitle") }}
+                            </p>
+                            <p class="text-body-2 text-medium-emphasis">
+                                {{ t("geolocation.welcomeText") }}
+                            </p>
+                        </div>
+                        <v-btn
+                            icon="mdi-close"
+                            size="x-small"
+                            variant="text"
+                            class="ml-auto"
+                            @click="dismissWelcomeBanner"
+                        />
+                    </div>
+                </v-card-text>
+                <v-card-actions class="pt-0 px-4 pb-3 flex-wrap">
+                    <v-btn
+                        color="primary"
+                        variant="flat"
+                        size="small"
+                        prepend-icon="mdi-crosshairs-gps"
+                        :loading="isLocating"
+                        @click="onWelcomeLocate"
+                    >
+                        {{ t("geolocation.findMySensor") }}
+                    </v-btn>
+                    <v-btn
+                        variant="text"
+                        size="small"
+                        class="ml-1"
+                        @click="dismissWelcomeBanner"
+                    >
+                        {{ t("geolocation.dismiss") }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+
+            <!-- Multi-Metric Summary Card -->
+            <v-card
+                v-if="showSummaryCard"
+                class="summary-card rounded-lg elevation-8"
+                max-width="360"
+            >
+                <v-card-title class="d-flex align-center pa-3 pb-2">
+                    <v-icon
+                        color="primary"
+                        size="20"
+                        class="mr-2"
+                    >
+                        mdi-crosshairs-gps
+                    </v-icon>
+                    <span class="text-subtitle-2">
+                        {{ t("geolocation.summaryTitle") }}
+                    </span>
+                    <v-spacer />
+                    <v-btn
+                        icon="mdi-close"
+                        size="x-small"
+                        variant="text"
+                        @click="showSummaryCard = false"
+                    />
+                </v-card-title>
+                <v-divider />
+                <v-list
+                    density="compact"
+                    class="pa-1"
+                >
+                    <v-list-item
+                        v-for="item in summaryMetrics"
+                        :key="item.metric"
+                        class="rounded"
+                        @click="onSummaryMetricClick(item)"
+                    >
+                        <template #prepend>
+                            <v-icon
+                                :color="item.metric === 'caqi' ? caqiLevel(item.value).color : (item.value !== null ? 'primary' : 'grey')"
+                                size="20"
+                            >
+                                {{ item.icon }}
+                            </v-icon>
+                        </template>
+                        <v-list-item-title class="text-body-2">
+                            {{ item.label }}
+                        </v-list-item-title>
+                        <v-list-item-subtitle class="text-caption">
+                            <template v-if="item.metric === 'caqi'">
+                                {{ caqiLevel(item.value).label }}
+                            </template>
+                            <template v-else>
+                                {{ item.sensorId }} · {{ item.distanceKm }} km
+                            </template>
+                        </v-list-item-subtitle>
+                        <template #append>
+                            <v-chip
+                                v-if="item.metric === 'caqi' && item.value !== null"
+                                :color="caqiLevel(item.value).color"
+                                size="small"
+                                variant="flat"
+                                class="font-weight-bold"
+                            >
+                                {{ item.value }}
+                            </v-chip>
+                            <span
+                                v-else-if="item.value !== null"
+                                class="text-body-2 font-weight-bold"
+                            >
+                                {{ item.value }} {{ item.unit }}
+                            </span>
+                            <span
+                                v-else
+                                class="text-caption text-medium-emphasis"
+                            >
+                                {{ t("sensor.noData") }}
+                            </span>
+                        </template>
+                    </v-list-item>
+                </v-list>
+            </v-card>
 
             <!-- Co-located sensor picker popup (revertable) -->
             <v-card
@@ -725,7 +1021,7 @@ onBeforeRouteLeave(() => {
                     >
                         <template #prepend>
                             <v-icon
-                                :color="sensor.hasData ? 'success' : 'grey'"
+                                :color="sensor.lastObservationResult == null ? '#000000' : !sensor.isActive ? '#8a8888' : getScaleColor(sensor.lastObservationResult)"
                                 size="10"
                             >
                                 mdi-circle
@@ -759,12 +1055,25 @@ onBeforeRouteLeave(() => {
             {{ alertSnackbarText }}
         </v-snackbar>
 
+        <v-snackbar
+            v-model="showLocationSnackbar"
+            color="info"
+            timeout="5000"
+            location="top"
+            min-width="auto"
+        >
+            <v-icon class="mr-2">
+                mdi-crosshairs-gps
+            </v-icon>
+            {{ locationSnackbarText }}
+        </v-snackbar>
+
         <SensorOverviewDialog
             v-model="isSensorOverviewDialog"
             :api-code="apiCode"
             :datastream-link="datastreamLink"
             :thing-link="thingLink"
-            :sensor-metric="sensorMetric"
+            :sensor-metric="dialogMetric"
         />
     </LayoutMap>
 </template>
@@ -818,5 +1127,21 @@ onBeforeRouteLeave(() => {
     max-width: 320px;
     max-height: 300px;
     overflow-y: auto;
+}
+
+.welcome-banner {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1001;
+    min-width: 300px;
+}
+
+.summary-card {
+    position: absolute;
+    top: 16px;
+    right: 64px;
+    z-index: 1001;
 }
 </style>

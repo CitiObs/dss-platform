@@ -476,9 +476,15 @@ async function main() {
         return;
     }
     
+    if (singleMetric && singleMetric === 'caqi') {
+        // CAQI is computed from pollutant caches, not fetched from API
+        await generateCaqiCache();
+        return;
+    }
+    
     if (singleMetric && !METRICS[singleMetric]) {
         console.error(`Unknown metric: ${singleMetric}`);
-        console.error(`Available: ${Object.keys(METRICS).join(', ')}`);
+        console.error(`Available: ${Object.keys(METRICS).join(', ')}, caqi`);
         process.exit(1);
     }
     
@@ -783,7 +789,164 @@ async function run() {
         await updateMode(singleMetric, debugMode);
     } else {
         await main();
+        // Generate CAQI cache after all pollutant caches (unless running a single non-CAQI metric)
+        if (!singleMetric || singleMetric === 'caqi') {
+            // Skip if main() already handled caqi via the early return
+            if (singleMetric !== 'caqi') {
+                await generateCaqiCache();
+            }
+        }
     }
+}
+
+/**
+ * EU CAQI calculation — mirrors computeCAQI in sensorDefinitions.js
+ */
+const CAQI_BREAKPOINTS = {
+    no2:  [[0, 50, 0, 25], [50, 100, 25, 50], [100, 200, 50, 75], [200, 400, 75, 100]],
+    pm10: [[0, 25, 0, 25], [25, 50, 25, 50],  [50, 90, 50, 75],   [90, 180, 75, 100]],
+    pm25: [[0, 15, 0, 25], [15, 30, 25, 50],  [30, 55, 50, 75],   [55, 110, 75, 100]],
+};
+
+function caqiSubIndex(pollutant, concentration) {
+    if (concentration == null || concentration < 0) return null;
+    const bp = CAQI_BREAKPOINTS[pollutant];
+    if (!bp) return null;
+    for (const [cLow, cHigh, iLow, iHigh] of bp) {
+        if (concentration <= cHigh) {
+            return iLow + ((concentration - cLow) / (cHigh - cLow)) * (iHigh - iLow);
+        }
+    }
+    const last = bp[bp.length - 1];
+    return last[3] + ((concentration - last[1]) / (last[1] - last[0])) * (last[3] - last[2]);
+}
+
+/**
+ * Generate caqi.json from existing pm25.json, pm10.json, no2.json caches.
+ * For each Thing that has at least one pollutant reading, compute CAQI and
+ * store the result with the worst-pollutant's datastream link (so dialog works).
+ */
+async function generateCaqiCache() {
+    console.log('\n=== Generating CAQI (Air Quality Index) Cache ===\n');
+    
+    const POLLUTANT_METRICS = ['pm25', 'pm10', 'no2'];
+    
+    // Load all pollutant caches: thingId → { metric, value, isActive, ds, location }
+    const thingData = new Map(); // thingId → { pm25, pm10, no2, location, dsLinks }
+    
+    for (const metric of POLLUTANT_METRICS) {
+        const cachePath = join(OUTPUT_DIR, `${metric}.json`);
+        let cache;
+        try {
+            cache = JSON.parse(await readFile(cachePath, 'utf-8'));
+        } catch (e) {
+            console.warn(`  [CAQI] Cannot read ${metric}.json — skipping: ${e.message}`);
+            continue;
+        }
+        
+        const seen = new Set();
+        for (const op of cache.data || []) {
+            for (const ds of op.Datastreams || []) {
+                const thingId = ds.Thing?.['@iot.id'];
+                if (!thingId || seen.has(thingId)) continue;
+                seen.add(thingId);
+                
+                if (!thingData.has(thingId)) {
+                    thingData.set(thingId, {
+                        thingId,
+                        location: ds.Thing.Locations?.[0]?.location || null,
+                        name: ds.Thing.name || '',
+                        pollutants: {},
+                    });
+                }
+                
+                const entry = thingData.get(thingId);
+                entry.pollutants[metric] = {
+                    value: ds.lastObservationResult,
+                    isActive: ds.isActive === true,
+                    dsId: ds['@iot.id'],
+                    dsSelfLink: ds['@iot.selfLink'] || `${BASE_URL}/Datastreams('${ds['@iot.id']}')`,
+                };
+            }
+        }
+        console.log(`  [CAQI] Loaded ${seen.size} Things from ${metric}.json`);
+    }
+    
+    console.log(`  [CAQI] Total unique Things across pollutants: ${thingData.size}`);
+    
+    // Compute CAQI for each Thing
+    const caqiDatastreams = [];
+    let activeCount = 0;
+    
+    for (const [thingId, data] of thingData) {
+        if (!data.location) continue;
+        
+        // Skip Null Island
+        const coords = data.location.coordinates;
+        if (coords && coords[0] === 0 && coords[1] === 0) continue;
+        
+        // Build concentration map
+        const concentrations = {};
+        let hasAnyValue = false;
+        for (const [metric, pData] of Object.entries(data.pollutants)) {
+            if (pData.value !== null && pData.value !== undefined) {
+                concentrations[metric] = pData.value;
+                hasAnyValue = true;
+            }
+        }
+        if (!hasAnyValue) continue;
+        
+        // Compute CAQI
+        let maxSubIndex = -1;
+        let worstMetric = null;
+        for (const [metric, conc] of Object.entries(concentrations)) {
+            const sub = caqiSubIndex(metric, conc);
+            if (sub !== null && sub > maxSubIndex) {
+                maxSubIndex = sub;
+                worstMetric = metric;
+            }
+        }
+        if (worstMetric === null) continue;
+        
+        const caqiScore = Math.round(maxSubIndex);
+        const worstDs = data.pollutants[worstMetric];
+        const isActive = Object.values(data.pollutants).some(p => p.isActive);
+        if (isActive) activeCount++;
+        
+        caqiDatastreams.push({
+            '@iot.id': worstDs.dsId,  // Worst pollutant's DS for dialog click-through
+            '@iot.selfLink': worstDs.dsSelfLink,
+            isActive,
+            lastObservationResult: caqiScore,
+            _worstMetric: worstMetric,  // Extra: which pollutant drove the score
+            Thing: {
+                '@iot.id': thingId,
+                name: data.name,
+                Locations: [{ location: data.location }],
+            },
+        });
+    }
+    
+    const output = {
+        generatedAt: new Date().toISOString(),
+        cacheVersion: Date.now().toString(36),
+        updateType: 'computed',
+        metric: 'caqi',
+        metricLink: null,
+        sensorCount: caqiDatastreams.length,
+        activeSensorCount: activeCount,
+        data: [{
+            '@iot.id': 'CAQI',
+            Datastreams: caqiDatastreams,
+        }],
+    };
+    
+    const outputPath = join(OUTPUT_DIR, 'caqi.json');
+    const jsonString = JSON.stringify(output);
+    await writeFile(outputPath, jsonString, 'utf-8');
+    
+    const fileSizeKB = Math.round(jsonString.length / 1024);
+    console.log(`  ✓ CAQI: ${caqiDatastreams.length} sensors (${activeCount} active) (${fileSizeKB} KB)`);
 }
 
 run().catch(console.error);

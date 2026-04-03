@@ -228,6 +228,7 @@ function observedPropertiesToGeoJSON(observedProperties, projection) {
                     description: thing.description || "",
                     isActive,  // Has data in last 5 days
                     lastObservationResult,  // Latest observation value for color scale
+                    ...(ds._worstMetric ? { worstMetric: ds._worstMetric } : {}),
                 },
             };
 

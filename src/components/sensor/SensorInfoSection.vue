@@ -121,7 +121,11 @@ const healthRecommendation = computed(() => {
 
 <template>
     <!-- Main Sensor Info -->
-    <div class="d-flex flex-column align-center py-2 ga-1">
+    <v-sheet
+        rounded="lg"
+        color="grey-lighten-3"
+        class="pa-4 d-flex flex-column align-center ga-1"
+    >
         <!-- Metric name with icon -->
         <div class="d-flex align-center ga-1">
             <p class="text-subtitle-1">
@@ -167,7 +171,7 @@ const healthRecommendation = computed(() => {
         >
             {{ healthRecommendation.text }}
         </v-alert>
-    </div>
+    </v-sheet>
 
     <!-- Info Table  -->
     <v-table

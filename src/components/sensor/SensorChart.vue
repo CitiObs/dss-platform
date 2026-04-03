@@ -42,6 +42,9 @@ const GUIDELINE_THRESHOLDS = {
         { value: 30, label: () => t("sensor.guidelineLowHumidity", { value: "30%" }), color: "#FF9800" },
         { value: 70, label: () => t("sensor.guidelineHighHumidity", { value: "70%" }), color: "#FF9800" },
     ],
+    atmosphericPressure: [
+        { value: 101.325, label: () => t("sensor.guidelineStdAtmosphere", { value: "101.325 kPa" }), color: "#2196F3" },
+    ],
 };
 
 // Compute data range for threshold filtering and Y-axis extension
@@ -65,7 +68,8 @@ const relevantThresholds = computed(() => {
 });
 
 const guidelineAnnotations = computed(() => {
-    return relevantThresholds.value.map((th, index) => ({
+    const thresholds = relevantThresholds.value;
+    return thresholds.map((th, index) => ({
         y: th.value,
         borderColor: th.color,
         strokeDashArray: 4,
@@ -80,7 +84,7 @@ const guidelineAnnotations = computed(() => {
                 padding: { left: 4, right: 4, top: 2, bottom: 2 },
             },
             position: "left",
-            offsetX: 0,
+            offsetX: index % 2 === 0 ? 0 : 140,
             offsetY: -10,
         },
     }));
@@ -123,6 +127,9 @@ const chartOptions = computed(() => {
         tooltip: {
             x: {
                 format: "dd MMM yyyy, HH:mm"
+            },
+            marker: {
+                show: false
             }
         },
         "colors": [

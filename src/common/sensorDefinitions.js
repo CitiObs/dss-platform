@@ -16,6 +16,7 @@ export const SENSOR_ICONS = {
     pm25: "mdi-grain",
     pm10: "mdi-grain",
     no2: "mdi-grain",
+    caqi: "mdi-air-filter",
 };
 
 export const SENSOR_DEFINITIONS = {
@@ -80,6 +81,7 @@ export const SENSOR_DEFINITIONS = {
         link: "https://www.eea.europa.eu/help/glossary/eea-glossary/pm2.5",
         scale: new Scale([
             createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
+            createScaleItem("(100,120]", { color: "#960050", label: "100..120" }),
             createScaleItem("(80,100]", { color: "#b7295d", label: "80..100" }),
             createScaleItem("(60,80]", { color: "#ff9844", label: "60..80" }),
             createScaleItem("(40,60]", { color: "#ffda55", label: "40..60" }),
@@ -96,6 +98,7 @@ export const SENSOR_DEFINITIONS = {
         link: "https://www.eea.europa.eu/help/glossary/eea-glossary/pm10",
         scale: new Scale([
             createScaleItem("(120,)", { color: "#60007a", label: "120.." }),
+            createScaleItem("(100,120]", { color: "#960050", label: "100..120" }),
             createScaleItem("(80,100]", { color: "#b7295d", label: "80..100" }),
             createScaleItem("(60,80]", { color: "#ff9844", label: "60..80" }),
             createScaleItem("(40,60]", { color: "#ffda55", label: "40..60" }),
@@ -117,6 +120,20 @@ export const SENSOR_DEFINITIONS = {
             createScaleItem("(80,120]", { color: "#ff7e00", label: "80..120" }),
             createScaleItem("(40,80]", { color: "#ffff00", label: "40..80" }),
             createScaleItem("(0,40]", { color: "#00e400", label: "..40" }),
+            ...commonCases,
+        ]),
+    },
+    caqi: {
+        label: () => t("sensor.caqi"),
+        unit: "",
+        icon: SENSOR_ICONS.caqi,
+        link: null,  // Computed index — no ObservedProperty in API
+        scale: new Scale([
+            createScaleItem("(100,)", { color: "#960032", label: "> 100" }),
+            createScaleItem("(75,100]", { color: "#ff5050", label: "75..100" }),
+            createScaleItem("(50,75]", { color: "#f0e641", label: "50..75" }),
+            createScaleItem("(25,50]", { color: "#50ccaa", label: "25..50" }),
+            createScaleItem("(0,25]", { color: "#50f0e6", label: "0..25" }),
             ...commonCases,
         ]),
     },
@@ -163,3 +180,51 @@ export const SENSOR_DEFINITIONS = {
     //     ]),
     // },
 };
+
+/**
+ * EU CAQI (Common Air Quality Index) — hourly background index.
+ * Linear interpolation between breakpoints; final score = max of sub-indices.
+ *
+ * Breakpoints (concentration µg/m³ → sub-index):
+ *   NO2:  [0,50]→[0,25]  [50,100]→[25,50]  [100,200]→[50,75]  [200,400]→[75,100]
+ *   PM10: [0,25]→[0,25]  [25,50]→[25,50]   [50,90]→[50,75]    [90,180]→[75,100]
+ *   PM2.5:[0,15]→[0,25]  [15,30]→[25,50]   [30,55]→[50,75]    [55,110]→[75,100]
+ */
+const CAQI_BREAKPOINTS = {
+    no2:  [[0, 50, 0, 25], [50, 100, 25, 50], [100, 200, 50, 75], [200, 400, 75, 100]],
+    pm10: [[0, 25, 0, 25], [25, 50, 25, 50],  [50, 90, 50, 75],   [90, 180, 75, 100]],
+    pm25: [[0, 15, 0, 25], [15, 30, 25, 50],  [30, 55, 50, 75],   [55, 110, 75, 100]],
+};
+
+function caqiSubIndex(pollutant, concentration) {
+    if (concentration == null || concentration < 0) return null;
+    const bp = CAQI_BREAKPOINTS[pollutant];
+    if (!bp) return null;
+    for (const [cLow, cHigh, iLow, iHigh] of bp) {
+        if (concentration <= cHigh) {
+            return iLow + ((concentration - cLow) / (cHigh - cLow)) * (iHigh - iLow);
+        }
+    }
+    // Above highest breakpoint — extrapolate linearly from last interval
+    const last = bp[bp.length - 1];
+    return last[3] + ((concentration - last[1]) / (last[1] - last[0])) * (last[3] - last[2]);
+}
+
+/**
+ * Compute the EU CAQI from pollutant concentrations.
+ * @param {{ no2?: number, pm10?: number, pm25?: number }} values
+ * @returns {{ score: number, worstPollutant: string } | null}
+ */
+export function computeCAQI(values) {
+    let maxIndex = -1;
+    let worstPollutant = null;
+    for (const [pollutant, conc] of Object.entries(values)) {
+        const sub = caqiSubIndex(pollutant, conc);
+        if (sub !== null && sub > maxIndex) {
+            maxIndex = sub;
+            worstPollutant = pollutant;
+        }
+    }
+    if (worstPollutant === null) return null;
+    return { score: Math.round(maxIndex), worstPollutant };
+}
