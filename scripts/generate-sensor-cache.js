@@ -543,18 +543,22 @@ async function main() {
             // Step 3: Collect non-FIJI datastream info (need separate queries)
             // KTUY, SWNP, RIVM, KNJV sources don't support $expand=Observations or $filter=phenomenonTime
             // These federated sources need individual datastream queries to check for recent data
+            // Also collect FIJI sensors missed by the 5-day window (inactive but with older data)
             let nonFijiDatastreams = [];
+            let missedFijiDatastreams = [];
             const NON_FIJI_PREFIXES = ['KTUY_', 'SWNP_', 'RIVM_', 'KNJV_'];
-            
+
             // QUICK MODE: Only re-check sensors that were previously active or recently had data
             const THIRTY_DAYS_AGO = 30 * 24 * 60 * 60 * 1000;
             let skippedInactive = 0;
-            
+
             for (const op of data) {
                 for (const ds of op.Datastreams || []) {
                     const dsId = ds['@iot.id']?.toString() || '';
                     const thingId = ds.Thing?.['@iot.id'];
-                    if (thingId && NON_FIJI_PREFIXES.some(prefix => dsId.startsWith(prefix))) {
+                    if (!thingId) continue;
+
+                    if (NON_FIJI_PREFIXES.some(prefix => dsId.startsWith(prefix))) {
                         // In QUICK MODE: Skip sensors that were inactive AND had old/no data
                         if (quickMode && existingDataMap.size > 0) {
                             const existingDs = existingDataMap.get(dsId);
@@ -562,7 +566,7 @@ async function main() {
                                 // Skip if: was inactive AND (no data OR data older than 30 days)
                                 const wasActive = existingDs.isActive === true;
                                 const hasRecentData = existingDs.lastObservationResult !== null;
-                                
+
                                 if (!wasActive && !hasRecentData) {
                                     // No data at all - skip (check in full scan)
                                     skippedInactive++;
@@ -571,6 +575,10 @@ async function main() {
                             }
                         }
                         nonFijiDatastreams.push({ dsId, thingId });
+                    } else if (dsId.startsWith('FIJI_') && !thingObservations.has(thingId)) {
+                        // FIJI sensor not found in 5-day window — query individually
+                        // to get latest observation (will show as gray instead of black)
+                        missedFijiDatastreams.push({ dsId, thingId });
                     }
                 }
             }
@@ -591,7 +599,16 @@ async function main() {
             
             // Step 4: Batch check non-FIJI datastreams for recent observations with values
             const nonFijiThingData = await fetchActiveNonFijiThingData(nonFijiDatastreams, 5, debugMode);
-            
+
+            // Step 4b: Check inactive FIJI sensors individually (missed by the 5-day /Observations query)
+            if (missedFijiDatastreams.length > 0) {
+                console.log(`  Checking ${missedFijiDatastreams.length} inactive FIJI sensors for latest observation...`);
+                const missedFijiThingData = await fetchActiveNonFijiThingData(missedFijiDatastreams, 5, debugMode);
+                for (const [thingId, obsData] of missedFijiThingData) {
+                    nonFijiThingData.set(thingId, obsData);
+                }
+            }
+
             // Merge observation data from both sources (keep most recent per thing)
             for (const [thingId, obsData] of nonFijiThingData) {
                 const existing = thingObservations.get(thingId);
