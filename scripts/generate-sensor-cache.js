@@ -156,16 +156,16 @@ async function fetchObservedProperties(metricLink) {
 async function fetchActiveThingData(metricLink, daysBack = 5) {
     const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
     const cutoffISO = cutoffDate.toISOString();
-    
+
     console.log(`  Fetching active sensors with values (observations since ${cutoffISO.split('T')[0]})...`);
-    
+
     // Map: thingId -> { result, phenomenonTime }
     const thingObservations = new Map();
     let totalObservations = 0;
     let skip = 0;
     const pageSize = 1000;
     const maxPages = 50;
-    
+
     for (let page = 0; page < maxPages; page++) {
         try {
             const params = new URLSearchParams({
@@ -176,32 +176,32 @@ async function fetchActiveThingData(metricLink, daysBack = 5) {
                 $top: String(pageSize),
                 $skip: String(skip),
             });
-            
+
             const url = `${BASE_URL}/Observations?${params}`;
             const response = await fetch(url, {
                 headers: { 'Accept': 'application/json' },
                 signal: AbortSignal.timeout(60000),
             });
-            
+
             if (!response.ok) {
                 console.log(`  Warning: Observations query returned ${response.status}, stopping`);
                 break;
             }
-            
+
             const data = await response.json();
             const items = data.value || [];
-            
+
             if (items.length === 0) {
                 break;
             }
-            
+
             for (const obs of items) {
                 const thingId = obs.Datastream?.Thing?.['@iot.id'];
                 // Skip -99 sentinel values (means "no data")
                 if (thingId && obs.result !== -99) {
                     const existing = thingObservations.get(thingId);
                     const obsTime = new Date(obs.phenomenonTime);
-                    
+
                     // Keep the most recent observation for each thing
                     if (!existing || obsTime > new Date(existing.phenomenonTime)) {
                         thingObservations.set(thingId, {
@@ -212,16 +212,16 @@ async function fetchActiveThingData(metricLink, daysBack = 5) {
                     }
                 }
             }
-            
+
             totalObservations += items.length;
             skip += items.length;
-            
+
         } catch (error) {
             console.log(`  Warning: Error on page ${page + 1}: ${error.message}`);
             break;
         }
     }
-    
+
     console.log(`  Found ${thingObservations.size} active sensors with values from ${totalObservations} observations (FIJI sources)`);
     return thingObservations;
 }
@@ -269,6 +269,9 @@ async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode 
                         headers: { 'Accept': 'application/json' },
                     });
                     if (debugMode) console.log(`[DEBUG ${dsId}] Response status: ${res.status}`);
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                    }
                     const data = await res.json();
                     if (debugMode) console.log(`[DEBUG ${dsId}] Raw observations count: ${(data.value || []).length}`);
                     let observations = data.value || [];
@@ -540,12 +543,11 @@ async function main() {
             // Step 2: Fetch active sensor data with observation values from /Observations endpoint (works for FIJI)
             const thingObservations = await fetchActiveThingData(link, 5);
             
-            // Step 3: Collect non-FIJI datastream info (need separate queries)
-            // KTUY, SWNP, RIVM, KNJV sources don't support $expand=Observations or $filter=phenomenonTime
-            // These federated sources need individual datastream queries to check for recent data
-            // Also collect FIJI sensors missed by the 5-day window (inactive but with older data)
+            // Step 3: Collect datastreams that need individual queries
+            // Non-FIJI sources (KTUY, SWNP, RIVM, KNJV) don't support $expand=Observations
+            // FIJI sensors missed by the 5-day /Observations query also go here
+            // All are queried individually to get latest observation regardless of age
             let nonFijiDatastreams = [];
-            let missedFijiDatastreams = [];
             const NON_FIJI_PREFIXES = ['KTUY_', 'SWNP_', 'RIVM_', 'KNJV_'];
 
             // QUICK MODE: Only re-check sensors that were previously active or recently had data
@@ -578,7 +580,8 @@ async function main() {
                     } else if (dsId.startsWith('FIJI_') && !thingObservations.has(thingId)) {
                         // FIJI sensor not found in 5-day window — query individually
                         // to get latest observation (will show as gray instead of black)
-                        missedFijiDatastreams.push({ dsId, thingId });
+                        // Treated the same as non-FIJI: fetch latest observation regardless of age
+                        nonFijiDatastreams.push({ dsId, thingId });
                     }
                 }
             }
@@ -597,17 +600,8 @@ async function main() {
                 console.log(`  [SAMPLE MODE] Processing ${nonFijiDatastreams.length} randomly selected datastreams`);
             }
             
-            // Step 4: Batch check non-FIJI datastreams for recent observations with values
+            // Step 4: Batch check all remaining datastreams (non-FIJI + missed FIJI) for latest observations
             const nonFijiThingData = await fetchActiveNonFijiThingData(nonFijiDatastreams, 5, debugMode);
-
-            // Step 4b: Check inactive FIJI sensors individually (missed by the 5-day /Observations query)
-            if (missedFijiDatastreams.length > 0) {
-                console.log(`  Checking ${missedFijiDatastreams.length} inactive FIJI sensors for latest observation...`);
-                const missedFijiThingData = await fetchActiveNonFijiThingData(missedFijiDatastreams, 5, debugMode);
-                for (const [thingId, obsData] of missedFijiThingData) {
-                    nonFijiThingData.set(thingId, obsData);
-                }
-            }
 
             // Merge observation data from both sources (keep most recent per thing)
             for (const [thingId, obsData] of nonFijiThingData) {
