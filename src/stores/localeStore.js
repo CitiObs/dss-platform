@@ -8,7 +8,7 @@ export const useLocaleStore = defineStore("locale", () => {
     const { current: vuetifyLocale } = useVuetifyLocale();
 
     function initLocale() {
-        const startingLocale = localStorage.getItem("locale") || "el";
+        const startingLocale = localStorage.getItem("locale") || "en";
         setLocale(startingLocale);
     }
 

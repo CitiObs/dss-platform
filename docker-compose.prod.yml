@@ -5,11 +5,13 @@ services:
       dockerfile: docker/Dockerfile
     container_name: citiobs2-frontend
     restart: unless-stopped
+    volumes:
+      - ./public/sensor-cache:/var/www/html/sensor-cache
     ports:
       - "3002:80"
     environment:
-      - VIRTUAL_HOST=citiobs2.draxis.gr
-      - LETSENCRYPT_HOST=citiobs2.draxis.gr
+      - VIRTUAL_HOST=dss.citiobs.eu
+      - LETSENCRYPT_HOST=dss.citiobs.eu
       - LETSENCRYPT_EMAIL=dev@draxis.gr
 
   keycloak:
@@ -24,9 +26,10 @@ services:
       - KC_PROXY_HEADERS=xforwarded
       - KC_HTTP_ENABLED=true
       - KC_HOSTNAME_STRICT=false
-      - VIRTUAL_HOST=auth-citiobs2.draxis.gr
+      - KC_HOSTNAME=https://auth.dss.citiobs.eu
+      - VIRTUAL_HOST=auth.dss.citiobs.eu
       - VIRTUAL_PORT=8080
-      - LETSENCRYPT_HOST=auth-citiobs2.draxis.gr
+      - LETSENCRYPT_HOST=auth.dss.citiobs.eu
       - LETSENCRYPT_EMAIL=dev@draxis.gr
     command: start --import-realm
     volumes:

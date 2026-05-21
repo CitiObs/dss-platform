@@ -12,12 +12,12 @@
       "publicClient": true,
       "directAccessGrantsEnabled": true,
       "redirectUris": [
-        "https://citiobs2.draxis.gr/*",
+        "https://dss.citiobs.eu/*",
         "http://localhost:3002/*",
         "http://*:3002/*"
       ],
       "webOrigins": [
-        "https://citiobs2.draxis.gr",
+        "https://dss.citiobs.eu",
         "http://localhost:3002",
         "*"
       ],
