@@ -46,17 +46,3 @@ To rebuild only the frontend after a change:
 ```sh
 docker compose -f docker-compose.prod.yml up -d co-frontend
 ```
-
-`build-image.sh` is available to build and publish a tagged image to Docker Hub (`draxis/citiobs-frontend`) as an alternative distribution path, but is not part of the current server deploy flow above.
-
-### Sensor cache refresh
-
-The sensor cache (`public/sensor-cache`) is kept up to date on the server via cron, running `scripts/generate-sensor-cache.js` in a throwaway `node:22` container:
-
-```cron
-# Quick update every hour (active sensors only, ~1-2 min)
-0 * * * * docker run --rm -v /home/draxis/citiobs-ai/co-frontend-ai:/app -w /app node:22 node scripts/generate-sensor-cache.js --quick
-
-# Full scan every 6 hours (discover new sensors, ~30 min)
-0 */6 * * * docker run --rm -v /home/draxis/citiobs-ai/co-frontend-ai:/app -w /app node:22 node scripts/generate-sensor-cache.js
-```
