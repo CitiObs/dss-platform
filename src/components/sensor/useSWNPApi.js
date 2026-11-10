@@ -1,6 +1,29 @@
 import { inject } from "vue";
 import { withAsync } from "@geoint/geoint-vue";
 
+const VIRTUALAIR_URL = "https://api-virtualair.nilu.no/v1.1";
+
+// Upstream server per datastream ID prefix, for sources that do not set properties.origin.
+// FIJI and KTUY are inferred (FIJI nextLinks point to nsdpstaplus, KTUY Things carry RIVM
+// Samen Meten metadata), not confirmed by NILU.
+const ORIGIN_BY_PREFIX = {
+    FIJI: "https://nsdpstaplus.nilu.no/FROST-Server/v1.1",
+    KTUY: "https://api-samenmeten.rivm.nl/v1.0",
+};
+
+/**
+ * Resolve the upstream server a datastream comes from.
+ * VirtualAir federates several servers; some set properties.origin, the rest are known by ID prefix.
+ */
+function resolveDataOrigin(datastream) {
+    const origin = datastream.properties?.origin;
+    if (origin) return origin;
+
+    const prefix = datastream["@iot.id"]?.toString().split("_")[0];
+
+    return ORIGIN_BY_PREFIX[prefix] || VIRTUALAIR_URL;
+}
+
 export function useSWNPApi () {
     const geoint = inject("geoint");
     const api = geoint.api("virtualair");
@@ -186,7 +209,7 @@ export function useSWNPApi () {
      * FIJI and other sources work fine with $orderby, so we use it to get the most recent data.
      */
     async function getDatastreamObservations(datastreamId, limit = 100) {
-        const url = `https://api-virtualair.nilu.no/v1.1/Datastreams('${datastreamId}')/Observations`;
+        const url = `${VIRTUALAIR_URL}/Datastreams('${datastreamId}')/Observations`;
         
         // KTUY sources are slow with $orderby, others (FIJI, etc.) work fine
         const isKTUY = datastreamId.toString().startsWith('KTUY_');
@@ -294,12 +317,12 @@ export function useSWNPApi () {
             thingId: datastream.Thing?.["@iot.id"] || "",
             thingName: datastream.Thing?.name || "",
             sensorType: datastream.Sensor?.name || "",
-            dataOrigin: "citiobs_demo",
+            dataOrigin: resolveDataOrigin(datastream),
             license: datastream.License?.name || ""
         };
 
         // Return the actual datastream link used (for Data Exploration tab)
-        const actualDatastreamLink = `https://api-virtualair.nilu.no/v1.1/Datastreams('${datastreamId}')`;
+        const actualDatastreamLink = `${VIRTUALAIR_URL}/Datastreams('${datastreamId}')`;
 
         return { 
             sensorInfo, 
