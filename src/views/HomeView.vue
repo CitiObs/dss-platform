@@ -18,6 +18,7 @@ import LayersDrawer from "@/components/layout/LayersDrawer.vue";
 import MapFilters from "@/components/MapFilters.vue";
 import LayoutMap from "@/layouts/LayoutMap.vue";
 import SensorOverviewDialog from "@/components/sensor/SensorOverviewDialog.vue";
+import { formatTimestamp } from "@/helpers/dates.js";
 
 const sensorThingsApi = useSensorThingsApi();
 const alertStore = useAlertStore();
@@ -55,6 +56,9 @@ const isLocating = ref(false);
 const userLocationFeatures = ref([]);
 const showLocationSnackbar = ref(false);
 const locationSnackbarText = ref("");
+const showStaleSnackbar = ref(false);
+const staleSnackbarText = ref("");
+const isSensorDataStale = ref(false);
 const showWelcomeBanner = ref(!localStorage.getItem("citiobs_welcome_dismissed"));
 const showSummaryCard = ref(false);
 const summaryMetrics = ref([]);
@@ -424,6 +428,8 @@ async function loadSensors() {
     if (metric === currentMetric && allSensorFeatures.value.size() > 0) return;
 
     isLoading.value = true;
+    showStaleSnackbar.value = false;
+    isSensorDataStale.value = false;
 
     try {
         const features = await sensorThingsApi.getAllThings(metric, {
@@ -439,6 +445,15 @@ async function loadSensors() {
                     currentMetric = metric;
                 }
             },
+            onStale: (generatedAt) => {
+                if (requestId !== fetchAbortFlag) return;
+
+                isSensorDataStale.value = true;
+                staleSnackbarText.value = generatedAt
+                    ? t("home.staleSensorData", { date: formatTimestamp(generatedAt) })
+                    : t("home.staleSensorDataUnknownDate");
+                showStaleSnackbar.value = true;
+            },
         });
 
         // Step 2 done — observations loaded, trigger re-render for colors
@@ -448,10 +463,10 @@ async function loadSensors() {
         // Force reactivity update so styles recalculate with observation data
         allSensorFeatures.value = new FeatureCollection(features);
 
-        // Evaluate alert rules against loaded sensor data
+        // Evaluate alert rules against loaded sensor data (not stale data: old readings raise false alerts)
         alertStore.clear();
         alertStore.loadRules(authStore.userId);
-        const result = alertStore.evaluate(features, metric);
+        const result = isSensorDataStale.value ? null : alertStore.evaluate(features, metric);
         if (result && result.count > 0) {
             alertSnackbarText.value = t("alerts.newAlerts", { count: result.count, threshold: result.threshold, unit: result.unit }, result.count);
             showAlertSnackbar.value = true;
@@ -700,6 +715,8 @@ watch(() => alertStore.rulesVersion, () => {
 function reEvaluateAlerts() {
     if (allSensorFeatures.value.size() === 0) return;
     alertStore.clear();
+    if (isSensorDataStale.value) return;
+
     const result = alertStore.evaluate(allSensorFeatures.value.all(), sensorMetric.value);
     if (result && result.count > 0) {
         alertSnackbarText.value = t("alerts.newAlerts", { count: result.count, threshold: result.threshold, unit: result.unit }, result.count);
@@ -1066,6 +1083,30 @@ onBeforeRouteLeave(() => {
                 mdi-crosshairs-gps
             </v-icon>
             {{ locationSnackbarText }}
+        </v-snackbar>
+
+        <v-snackbar
+            v-model="showStaleSnackbar"
+            color="warning"
+            timeout="-1"
+            location="bottom"
+            multi-line
+            min-width="auto"
+        >
+            <v-icon class="mr-2">
+                mdi-clock-alert-outline
+            </v-icon>
+            {{ staleSnackbarText }}
+
+            <template #actions>
+                <v-btn
+                    icon="mdi-close"
+                    size="small"
+                    variant="text"
+                    :aria-label="t('alerts.close')"
+                    @click="showStaleSnackbar = false"
+                />
+            </template>
         </v-snackbar>
 
         <SensorOverviewDialog

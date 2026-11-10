@@ -57,6 +57,8 @@ export default {
     home: {
         welcomeToCitiobs: "Welcome to CitiObs!",
         loadingMapData: "Loading map data, please wait...",
+        staleSensorData: "Sensor data was last updated on {date} and may be outdated.",
+        staleSensorDataUnknownDate: "The time of the last sensor data update is unknown. Data may be outdated.",
         logoDSSText: "DSS",
     },
 

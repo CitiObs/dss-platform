@@ -25,6 +25,12 @@ const SENSOR_CACHE_DB = "sensorThingsCache";
 const SENSOR_CACHE_STORE = "sensors";
 const SENSOR_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Static sensor-cache/*.json files older than this are still shown (the live API is slower and
+// has no CAQI source), but getAllThings reports them through onStale so the UI can warn the user.
+// The cron refreshes each metric every 3-6 hours (measured 2026-11-10), so this
+// only flags a broken cron, not normal refresh lag.
+const STATIC_CACHE_MAX_AGE = 12 * 60 * 60 * 1000; // 12 hours
+
 /**
  * Open IndexedDB database
  */
@@ -788,8 +794,10 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
      *
      * Returns: OL Feature[]
      * Calls onProgress(features, isPartial) when data is ready.
+     * Calls onStale(generatedAt) when the static JSON is older than STATIC_CACHE_MAX_AGE
+     * or has no valid generatedAt (generatedAt is then null).
      */
-    const getAllThings = async (metric, { onProgress, skipCache = false } = {}) => {
+    const getAllThings = async (metric, { onProgress, onStale, skipCache = false } = {}) => {
         const metricLink = SENSOR_DEFINITIONS[metric].link;
 
         // === STEP 1: Try static JSON for instant first load ===
@@ -821,8 +829,24 @@ export function useSensorThingsApi(projection = "EPSG:3857") {
                             console.log('[getAllThings] Sample features:', sample);
                         }
                         
-                        // Cache to IndexedDB for offline/faster subsequent loads
-                        cacheSensors(metric, staticData.data);
+                        // An unknown age (missing or invalid generatedAt) counts as stale
+                        const generatedAt = Date.parse(staticData.generatedAt);
+                        const isStale = !(Date.now() - generatedAt <= STATIC_CACHE_MAX_AGE);
+
+                        // Cache to IndexedDB for offline/faster subsequent loads.
+                        // Stale data is not cached: the IndexedDB fallback cannot warn about it.
+                        if (!isStale) cacheSensors(metric, staticData.data);
+
+                        if (isStale) {
+                            console.warn(`[getAllThings] Static JSON is stale (generated: ${staticData.generatedAt})`);
+
+                            // A failing handler must not discard the static data loaded above
+                            try {
+                                if (onStale) onStale(Number.isNaN(generatedAt) ? null : staticData.generatedAt);
+                            } catch (e) {
+                                console.error("[getAllThings] onStale handler failed:", e);
+                            }
+                        }
                         
                         if (onProgress) onProgress(features, false);
                         return features;
