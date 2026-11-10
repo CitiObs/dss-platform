@@ -41,6 +41,10 @@ const OUTPUT_DIR = join(__dirname, '..', 'public', 'sensor-cache');
 
 const BASE_URL = 'https://api-virtualair.nilu.no/v1.1';
 
+// Refuse a datastream list smaller than this share of the existing cache, after this many tries
+const LIST_MIN_RATIO = 0.9;
+const LIST_MAX_ATTEMPTS = 3;
+
 // Same metric definitions as sensorDefinitions.js
 // NOTE: NO2 uses lowercase 'envthes' - the API is case-sensitive!
 const METRICS = {
@@ -238,7 +242,7 @@ async function fetchActiveThingData(metricLink, daysBack = 5) {
  * - isActive: true if observation is within daysBack
  * - result/phenomenonTime: latest observation (even if old) for gray display
  */
-async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode = false) {
+async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode = false, failed = []) {
     if (datastreams.length === 0) {
         return new Map();
     }
@@ -300,9 +304,14 @@ async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode 
                                         obs.result !== null && obs.result !== undefined && obs.result !== -99
                                     );
                                     if (debugMode) console.log(`[DEBUG ${dsId}] RIVM fallback returned ${observations.length} valid observations`);
+                                } else if (rivmRes.status >= 500) {
+                                    throw new Error(`RIVM HTTP ${rivmRes.status}: ${rivmRes.statusText}`);
                                 }
                             } catch (rivmErr) {
                                 if (debugMode) console.log(`[DEBUG ${dsId}] RIVM fallback error: ${rivmErr.message}`);
+                                // Network errors, timeouts and 5xx are not "no data": let the retry
+                                // loop handle them so a persistent failure ends up in `failed`
+                                throw rivmErr;
                             }
                         }
                     }
@@ -346,6 +355,7 @@ async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode 
                     continue;
                 }
                 // Final attempt failed
+                failed.push({ dsId, thingId });
                 return { thingId, data: null };
             }
             }
@@ -396,12 +406,13 @@ function minimizeData(observedProperties, thingObservations) {
             // Use isActive from obsData if available, otherwise false if no data
             const isActive = obsData?.isActive ?? false;
             const lastObservationResult = obsData?.result ?? null;
-            
+
             return {
                 '@iot.id': ds['@iot.id'],
                 '@iot.selfLink': ds['@iot.selfLink'],
                 isActive,
                 lastObservationResult,  // For color scale on first load
+                ...(obsData?.refreshFailed ? { refreshFailed: true } : {}),  // Value copied from the previous cache
                 Thing: ds.Thing ? {
                     '@iot.id': ds.Thing['@iot.id'],
                     name: ds.Thing.name,
@@ -516,30 +527,47 @@ async function main() {
         try {
             const startTime = Date.now();
             
-            // QUICK MODE: Load existing cache and only update active sensors
+            // Load the existing cache. Quick mode only updates active sensors and merges
+            // with it; both modes use it as a fallback for requests that fail.
             let existingCache = null;
             let existingDataMap = new Map();  // dsId -> datastream data
             const cacheFile = join(OUTPUT_DIR, `${metric}.json`);
-            
-            if (quickMode) {
-                try {
-                    existingCache = JSON.parse(await readFile(cacheFile, 'utf8'));
-                    console.log(`  [QUICK] Loaded existing cache: ${existingCache.sensorCount} sensors, ${existingCache.activeSensorCount} active`);
-                    
-                    // Build a map of existing datastream data for fast lookup
-                    for (const op of existingCache.data || []) {
-                        for (const ds of op.Datastreams || []) {
-                            existingDataMap.set(ds['@iot.id'], ds);
-                        }
+
+            try {
+                existingCache = JSON.parse(await readFile(cacheFile, 'utf8'));
+                console.log(`  Loaded existing cache: ${existingCache.sensorCount} sensors, ${existingCache.activeSensorCount} active`);
+
+                // Build a map of existing datastream data for fast lookup
+                for (const op of existingCache.data || []) {
+                    for (const ds of op.Datastreams || []) {
+                        existingDataMap.set(ds['@iot.id'], ds);
                     }
-                } catch (e) {
+                }
+            } catch (e) {
+                if (quickMode) {
                     console.log(`  [QUICK] No existing cache found, falling back to full scan`);
                 }
             }
             
-            // Step 1: Fetch all sensors (with observations for non-KTUY sources)
-            const data = await fetchObservedProperties(link);
-            
+            // Step 1: Fetch all sensors (with observations for non-KTUY sources).
+            // The API sometimes returns a partial list with HTTP 200 (seen: 331 and 3820 of
+            // ~7800 datastreams). A full scan would write that list as is and drop most sensors
+            // from the map, so retry and, if the list stays short, keep the existing cache.
+            const countDatastreams = (ops) => ops.reduce((n, op) => n + (op.Datastreams || []).length, 0);
+            const expectedDatastreams = countDatastreams(existingCache?.data || []);
+
+            let data = [];
+            for (let attempt = 1; attempt <= LIST_MAX_ATTEMPTS; attempt++) {
+                data = await fetchObservedProperties(link);
+                const received = countDatastreams(data);
+                if (received >= expectedDatastreams * LIST_MIN_RATIO) break;
+
+                console.log(`  WARNING: API returned ${received} datastreams, existing cache has ${expectedDatastreams} (attempt ${attempt}/${LIST_MAX_ATTEMPTS})`);
+                if (attempt === LIST_MAX_ATTEMPTS) {
+                    throw new Error(`Incomplete datastream list from the API (${received} of ${expectedDatastreams}), keeping the existing cache`);
+                }
+            }
+
             // Step 2: Fetch active sensor data with observation values from /Observations endpoint (works for FIJI)
             const thingObservations = await fetchActiveThingData(link, 5);
             
@@ -601,7 +629,8 @@ async function main() {
             }
             
             // Step 4: Batch check all remaining datastreams (non-FIJI + missed FIJI) for latest observations
-            const nonFijiThingData = await fetchActiveNonFijiThingData(nonFijiDatastreams, 5, debugMode);
+            const failedDatastreams = [];
+            const nonFijiThingData = await fetchActiveNonFijiThingData(nonFijiDatastreams, 5, debugMode, failedDatastreams);
 
             // Merge observation data from both sources (keep most recent per thing)
             for (const [thingId, obsData] of nonFijiThingData) {
@@ -610,7 +639,29 @@ async function main() {
                     thingObservations.set(thingId, obsData);
                 }
             }
-            
+
+            // Datastreams whose request failed after all retries keep their previous cache
+            // value instead of being written as no-data (which would also make the next quick
+            // run skip them until the next full scan). They stay active only on the first
+            // failed quick run; a second consecutive failure, or any failure in a full scan,
+            // marks them inactive so an old reading is not shown as current for long.
+            // Having a value, they are re-checked on the next quick run.
+            let fallbackCount = 0;
+            for (const { dsId, thingId } of failedDatastreams) {
+                const previous = existingDataMap.get(dsId);
+                if (thingObservations.has(thingId) || previous?.lastObservationResult == null) continue;
+
+                thingObservations.set(thingId, {
+                    result: previous.lastObservationResult,
+                    isActive: quickMode && previous.isActive === true && !previous.refreshFailed,
+                    refreshFailed: true,
+                });
+                fallbackCount++;
+            }
+            if (failedDatastreams.length > 0) {
+                console.log(`  ${failedDatastreams.length} requests failed after retries, ${fallbackCount} kept their previous cache value`);
+            }
+
             const fetchTime = Date.now() - startTime;
             
             // Minimize data and add isActive flag + lastObservationResult
@@ -762,6 +813,7 @@ async function updateMode(metric, debugMode) {
                 const obsData = thingObservations.get(thingId);
                 ds.isActive = obsData.isActive;
                 ds.lastObservationResult = obsData.result;
+                delete ds.refreshFailed;
                 updated++;
             }
         }
