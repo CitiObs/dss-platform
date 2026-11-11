@@ -32,7 +32,8 @@
  *   public/sensor-cache/no2.json
  */
 
-import { mkdir, writeFile, readFile } from 'fs/promises';
+import { chmod, chown, mkdir, readFile, rename, rm, stat, writeFile } from 'fs/promises';
+import { constants as osConstants } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -55,6 +56,76 @@ const METRICS = {
     pm10: 'https://www.eea.europa.eu/help/glossary/eea-glossary/pm10',
     no2: 'https://vocabs.lter-europe.net/envthes/en/page/20842',  // lowercase 'envthes' - API is case-sensitive
 };
+
+/**
+ * fetch() with a hard deadline that also covers reading the body.
+ *
+ * AbortSignal.timeout() runs on an unref'd timer. When a request stalls in a state that keeps
+ * nothing else alive, Node finds an empty event loop and exits with code 0 in the middle of a
+ * run, before that timeout fires (seen in production on 2026-11-10). The timer here is ref'd,
+ * so the process stays alive until the deadline, and the race rejects even when the abort
+ * does not settle the request.
+ *
+ * Returns the status fields plus json(), which parses the body that was already read.
+ */
+async function fetchWithDeadline(url, timeoutMs, options = {}) {
+    const controller = new AbortController();
+    let timer;
+    const deadline = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            controller.abort();
+            reject(new Error(`Request timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
+
+    const request = (async () => {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        const body = await response.text();
+
+        return {
+            ok: response.ok,
+            status: response.status,
+            statusText: response.statusText,
+            json: () => JSON.parse(body),
+        };
+    })();
+    // After the deadline wins the race, the aborted request rejects with nobody listening
+    request.catch(() => {});
+
+    try {
+        return await Promise.race([request, deadline]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * Write a cache file through a temporary file and a rename.
+ * A run that dies, or a full disk, in the middle of the write then leaves the previous file
+ * in place, and nginx never serves a half-written one.
+ */
+async function writeFileAtomic(path, content) {
+    const tempPath = `${path}.tmp`;
+
+    try {
+        await writeFile(tempPath, content, 'utf-8');
+
+        // The rename replaces the file, so carry over the owner and mode of the one it
+        // replaces. Cron writes as root inside a container, the files belong to the host user.
+        try {
+            const { uid, gid, mode } = await stat(path);
+            await chown(tempPath, uid, gid);
+            await chmod(tempPath, mode);
+        } catch {
+            // No previous file, or not allowed to change the owner: keep the defaults
+        }
+
+        await rename(tempPath, path);
+    } catch (error) {
+        await rm(tempPath, { force: true }).catch(() => {});
+        throw error;
+    }
+}
 
 /**
  * Fetch ObservedProperties with chunked Datastreams pagination.
@@ -92,11 +163,11 @@ async function fetchObservedProperties(metricLink) {
         while (nextUrl) {
             console.log(`  [skip=${skip}] Fetching: ${nextUrl.substring(0, 80)}...`);
             
-            const response = await fetch(nextUrl, {
+            // 3 minute timeout per request
+            const response = await fetchWithDeadline(nextUrl, 180000, {
                 headers: {
                     'Accept': 'application/json',
                 },
-                signal: AbortSignal.timeout(180000), // 3 minute timeout per request
             });
             
             if (!response.ok) {
@@ -182,9 +253,8 @@ async function fetchActiveThingData(metricLink, daysBack = 5) {
             });
 
             const url = `${BASE_URL}/Observations?${params}`;
-            const response = await fetch(url, {
+            const response = await fetchWithDeadline(url, 60000, {
                 headers: { 'Accept': 'application/json' },
-                signal: AbortSignal.timeout(60000),
             });
 
             if (!response.ok) {
@@ -268,8 +338,8 @@ async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode 
                     // Some sensors have many null readings before valid data
                     const url = `${BASE_URL}/Datastreams('${dsId}')/Observations?$top=200&$orderby=phenomenonTime%20desc&$select=phenomenonTime,result`;
                     if (debugMode) console.log(`\n[DEBUG ${dsId}] Attempt ${attempt}: ${url}`);
-                    const res = await fetch(url, { 
-                        signal: AbortSignal.timeout(20000),  // 20s timeout for reliability
+                    // 20s timeout for reliability
+                    const res = await fetchWithDeadline(url, 20000, {
                         headers: { 'Accept': 'application/json' },
                     });
                     if (debugMode) console.log(`[DEBUG ${dsId}] Response status: ${res.status}`);
@@ -294,8 +364,7 @@ async function fetchActiveNonFijiThingData(datastreams, daysBack = 5, debugMode 
                             const rivmUrl = `https://api-samenmeten.rivm.nl/v1.0/Datastreams(${numericId})/Observations?$top=5&$orderby=phenomenonTime%20desc&$select=phenomenonTime,result`;
                             if (debugMode) console.log(`[DEBUG ${dsId}] Virtualair empty, trying RIVM fallback: ${rivmUrl}`);
                             try {
-                                const rivmRes = await fetch(rivmUrl, {
-                                    signal: AbortSignal.timeout(15000),
+                                const rivmRes = await fetchWithDeadline(rivmUrl, 15000, {
                                     headers: { 'Accept': 'application/json' },
                                 });
                                 if (rivmRes.ok) {
@@ -468,7 +537,7 @@ async function main() {
                             console.log(`\n  Fetching LIVE data from API...`);
                             try {
                                 const url = `${BASE_URL}/Datastreams('${ds['@iot.id']}')/Observations?$top=5&$orderby=phenomenonTime%20desc&$select=phenomenonTime,result`;
-                                const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+                                const res = await fetchWithDeadline(url, 20000);
                                 const data = await res.json();
                                 const obs = (data.value || []).filter(o => o.result !== null && o.result !== -99);
                                 if (obs.length > 0) {
@@ -728,7 +797,7 @@ async function main() {
             
             const outputPath = join(OUTPUT_DIR, `${metric}.json`);
             const jsonString = JSON.stringify(output);
-            await writeFile(outputPath, jsonString, 'utf-8');
+            await writeFileAtomic(outputPath, jsonString);
             
             const fileSizeKB = Math.round(jsonString.length / 1024);
             console.log(`  ✓ Saved ${thingIds.size} sensors (${activeCount} active) (${fileSizeKB} KB) in ${fetchTime}ms`);
@@ -747,6 +816,15 @@ async function main() {
     
     console.log('\n=== Summary ===');
     console.table(results);
+
+    // A metric that failed was not refreshed. Report it through the exit code too.
+    const failedMetrics = Object.keys(results).filter(metric => 'error' in results[metric]);
+    if (failedMetrics.length > 0) {
+        console.error(`\nERROR: ${failedMetrics.length} of ${metricsToProcess.length} metrics failed: ${failedMetrics.join(', ')}`);
+        process.exitCode = 1;
+        return;
+    }
+
     console.log('\nDone! Static JSON files generated in public/sensor-cache/');
 }
 
@@ -831,7 +909,7 @@ async function updateMode(metric, debugMode) {
     
     // Save updated cache
     const jsonString = JSON.stringify(existingData);
-    await writeFile(inputPath, jsonString, 'utf-8');
+    await writeFileAtomic(inputPath, jsonString);
     
     const fileSizeKB = Math.round(jsonString.length / 1024);
     console.log(`\n✓ Updated ${updated} sensors (${newActiveCount} active) (${fileSizeKB} KB)`);
@@ -1006,10 +1084,42 @@ async function generateCaqiCache() {
     
     const outputPath = join(OUTPUT_DIR, 'caqi.json');
     const jsonString = JSON.stringify(output);
-    await writeFile(outputPath, jsonString, 'utf-8');
+    await writeFileAtomic(outputPath, jsonString);
     
     const fileSizeKB = Math.round(jsonString.length / 1024);
     console.log(`  ✓ CAQI: ${caqiDatastreams.length} sensors (${activeCount} active) (${fileSizeKB} KB)`);
 }
 
-run().catch(console.error);
+let runCompleted = false;
+
+// A run that stops before the end must not look like a success. This also covers an event
+// loop that empties while something is still pending, which ends the process with code 0
+// and no message.
+process.on('exit', (code) => {
+    if (runCompleted || code !== 0) return;
+
+    console.error(`\n[${new Date().toISOString()}] ERROR: the process is exiting before the run completed`);
+    process.exitCode = 1;
+});
+
+// By default a signal ends the process without an 'exit' event, so report it here.
+// SIGKILL and an out-of-memory kill cannot be caught: those runs leave no closing line.
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    process.on(signal, () => {
+        console.error(`\n[${new Date().toISOString()}] ERROR: received ${signal} before the run completed`);
+        process.exit(128 + osConstants.signals[signal]);
+    });
+}
+
+console.log(`[${new Date().toISOString()}] Run started`);
+
+run()
+    .then(() => {
+        runCompleted = true;
+        console.log(`[${new Date().toISOString()}] ${process.exitCode ? 'Run finished with errors' : 'Run finished'}`);
+    })
+    .catch((error) => {
+        console.error(`\n[${new Date().toISOString()}] ERROR: the run failed`);
+        console.error(error);
+        process.exitCode = 1;
+    });

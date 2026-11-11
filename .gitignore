@@ -12,6 +12,9 @@ coverage
 /cypress/videos/
 /cypress/screenshots/
 
+# Left behind when the sensor cache generator is killed in the middle of a write
+/public/sensor-cache/*.tmp
+
 # local env files
 .env
 .env.development
