@@ -70,8 +70,9 @@ Listed in `.env.example`. Copy it to `.env` and fill in the values.
 | `VITE_KEYCLOAK_CLIENT_ID` | Keycloak client. Must match the same file (`co-frontend`). |
 | `VITE_API_URL` | Not in use. Base URL of the `geoint-api` client that `@geoint/geoint-vue` uses for its backend features (workspaces, GIS layers, reports). The app uses none of them. |
 | `VITE_GEOSERVER_URL` | Not in use. Base URL of the `wfs` client of `@geoint/geoint-vue`. The app makes no WFS requests. |
+| `KC_BOOTSTRAP_ADMIN_PASSWORD` | Password of the Keycloak bootstrap admin (`admin`), read by `docker-compose.prod.yml`. Required on the server: every `docker compose --file docker-compose.prod.yml` command fails without it, including the frontend build. |
 
-All of them are build-time values: Vite writes them into the bundle.
+The `VITE_*` variables are build-time values: Vite writes them into the bundle.
 
 -   Development: `docker-compose.yml` sets them under `environment`. A local `.env` works too.
 -   Production: the image build reads `.env` from the project root on the server. After a change, build and recreate the container as described in [Deployment](#deployment).
@@ -148,4 +149,6 @@ To run under another domain, change:
 -   `redirectUris` and `webOrigins` of the `co-frontend` client in `docker/keycloak/citiobs-realm.json`. Keycloak imports this file only when the realm does not exist yet. For an existing realm, change them in the Keycloak admin console.
 -   `VITE_KEYCLOAK_URL` in `.env`, then rebuild the image.
 
-Change the Keycloak bootstrap admin credentials in `docker-compose.prod.yml` before the first start. They are only used to create the first admin user.
+The Keycloak bootstrap admin password comes from `.env` (see [Environment variables](#environment-variables)). Keycloak uses them only when the `master` realm has no admin user, so after the first start, change the admin password in the admin console.
+
+`docker/keycloak/citiobs-realm.json` holds no users. Like the client settings, the realm settings in it (`sslRequired`, brute force detection, registration) apply only when the realm is created. For an existing realm, change them in the admin console.

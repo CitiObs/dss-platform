@@ -4,41 +4,25 @@
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
   "loginWithEmailAllowed": true,
-  "sslRequired": "none",
+  "sslRequired": "external",
+  "bruteForceProtected": true,
+  "permanentLockout": false,
   "clients": [
     {
       "clientId": "co-frontend",
       "enabled": true,
       "publicClient": true,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "redirectUris": [
         "https://dss.citiobs.eu/*",
-        "http://localhost:3002/*",
-        "http://*:3002/*"
+        "https://citiobs.draxis.gr/*"
       ],
       "webOrigins": [
         "https://dss.citiobs.eu",
-        "http://localhost:3002",
-        "*"
+        "https://citiobs.draxis.gr"
       ],
       "protocol": "openid-connect",
       "standardFlowEnabled": true
-    }
-  ],
-  "users": [
-    {
-      "username": "demo",
-      "enabled": true,
-      "email": "demo@citiobs.eu",
-      "firstName": "Demo",
-      "lastName": "User",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "demo123",
-          "temporary": false
-        }
-      ]
     }
   ]
 }
