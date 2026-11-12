@@ -32,10 +32,10 @@ npm run lint
 
 ## Deployment
 
-Production runs on the `version2` branch, deployed manually (no CI/CD pipeline) on the app server at `/home/draxis/citiobs-ai/co-frontend-ai`:
+Production runs on the `main` branch, deployed manually (no CI/CD pipeline) on the app server at `/home/draxis/citiobs-ai/co-frontend-ai`:
 
 ```sh
-git pull --ff-only origin version2
+git pull --ff-only origin main
 docker compose --file docker-compose.prod.yml build co-frontend
 docker compose --file docker-compose.prod.yml up --detach --no-deps co-frontend
 ```
