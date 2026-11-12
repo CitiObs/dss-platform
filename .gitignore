@@ -30,6 +30,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Editor directories and files
+.claude/settings.local.json
 .idea
 .vscode/*
 !.vscode/extensions.json

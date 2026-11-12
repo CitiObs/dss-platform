@@ -139,7 +139,6 @@ Both jobs run the script in a throwaway `node:22` container with the repository 
 -   A quick run takes 3 to 5 hours (measured in November 2026), so each metric is refreshed about every 3 to 6 hours, not hourly. The 12 hour warning threshold is set with this in mind.
 -   The log file must be writable by the cron user. If it is not, the job fails silently and the files stop updating.
 -   Each run logs `Run started` and `Run finished` with a UTC timestamp. A run that fails, or stops before the end, logs a line with `ERROR:` and exits with a non-zero code. The exception is a run killed outright (`SIGKILL`, out of memory), which leaves `Run started` with no closing line. A metric that fails is not refreshed in that run, and the run ends with `Run finished with errors`.
--   `scripts/cron-generate-cache.sh` is not used on the production server. The schedule and log path in its header comments do not match the setup above.
 
 ### Hostnames and Keycloak
 
